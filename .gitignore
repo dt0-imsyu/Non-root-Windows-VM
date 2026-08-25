@@ -1,0 +1,9 @@
+# Generated and large VM artifacts stay local; record hashes/manifests instead.
+*.img
+*.iso
+*.qcow2
+*.wim
+*.fd
+*.apk
+out/
+Build/

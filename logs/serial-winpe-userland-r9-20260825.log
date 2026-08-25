@@ -1,0 +1,136 @@
+WRAPPER: entering U-Boot
+SRPADQEC126345789aihlopuvwxyzBFGHIqrstmnjkbcLMNdeflopuvwxyzBFGHIqrstmuvwxyzuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzuvwxyzBFGHIBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHInCore:  17 devices, 9 uclasses, devicetree: board
+uvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIuvwxyzBFGHIFlash: 0 Bytes
+In:    serial,usbkbd
+Out:   serial,vidconsole
+Err:   serial,vidconsole
+VB:probe=1042
+VB:common bar=0 off=00000000 len=00000038
+VB:notify bar=0 off=00003000 len=00001000
+VB:isr bar=0 off=00001000 len=00000001
+VB:device bar=0 off=00002000 len=00001000
+VB:map common=000000002c020000 notify=000000002c023000 device=000000002c022000
+VB:probe-done notify-mult=00000004
+uvwxyzBFGHIuvwxyzBFGHINo USB controllers found
+Net:   No ethernet found.
+uvwxyzBFGHI[?25h
+Hit any key to stop autoboot:  2 Hit any key to stop autoboot: 1[KHit any key to stop autoboot: 0[K
+boot_params = 0x0000000000000000
+DRAM bank   = 0x0000000000000000
+-> start    = 0x0000000080000000
+-> size     = 0x0000000100000000
+flashstart  = 0x0000000000000000
+flashsize   = 0x0000000000000000
+flashoffset = 0x000000000015c580
+baudrate    = 115200 bps
+relocaddr   = 0x000000013f6b0000
+reloc off   = 0x000000013f6b0000
+Build       = 64-bit
+current eth = unknown
+eth-1addr   = (not set)
+IP addr     = <NULL>
+fdt_blob    = 0x000000013e66c6a0
+lmb_dump_all:
+ memory.count = 0x1
+ memory[0]	[0x80000000-0x17fffffff], 0x100000000 bytes, flags: none
+ reserved.count = 0x2
+ reserved[0]	[0x13d648000-0x13d64afff], 0x3000 bytes, flags: no-notify, no-overwrite
+ reserved[1]	[0x13d64bff0-0x17fffffff], 0x429b4010 bytes, flags: no-overwrite
+devicetree  = board
+serial addr = 0x00000000000003f8
+ width      = 0x0000000000000001
+ shift      = 0x0000000000000000
+ offset     = 0x0000000000000000
+ clock      = 0x00000000001c2000
+arch_number = 0x0000000000000000
+TLB addr    = 0x000000013fff0000
+irq_sp      = 0x000000013e64bff0
+sp start    = 0x000000013e64bff0
+Early malloc usage: 188 / 2000
+VB:status-read=01
+VB:reset-write=00
+VB:reset-read=00 VB:reset-done
+VB:driver-write
+VB:driver-read=03
+VB:devfeatures=0000040120007244
+VB:drvfeatures=0000000100004040
+VB:features-ok-write
+VB:features-ok-read=0b
+VB:blk-probe
+VB:qselect=0
+VB:qsize=256 qenable-read=0
+VB:qdesc=000000013e677000
+VB:qavail=000000013e678000
+VB:qused=000000013e679000
+VB:qenable-write=1 qenable-read=1
+VB:blk-vq-ok
+VB:blk-cap=0000000001100000
+VB:blk-size=512
+VB:blk-probe-done lba=0000000001100000 blksz=512
+VB:driver-ok-read=0f
+uvwxyzBFGHI            ./
+            ../
+  2097152   QEMU_EFI.fd
+
+1 file(s), 2 dir(s)
+
+2097152 bytes read in 9 ms (222.2 MiB/s)
+SECOND_STAGE_EDK2: handoff entry=90000000 fdt=000000013e66c6a0
+UEFI firmware (version  built at 14:55:46 on Aug 25 2026)
+AVF_GIC_FDT: v3 distributor @ 0x3FFF0000 redistributor @ 0x3FEF0000
+Flash device for UEFI variable storage not found
+NorFlashInitialise: Fail to initialize Nor Flash devices
+Error: Image at 0017EB60000 start failed: Not Found
+PCI:PCD_FIND_ECAM status=Success node=12356
+PCI:PCD_REG status=Success len=16
+PCI:PCD_ECAM=2E000000
+PCI:PCD_FINAL=2E000000
+AVF_TIMER_FDT: interrupts 29, 30, 27, 26
+PCI:FDT_FOUND node=12356
+PCI:ECAM=2E000000,1000000
+PCI:BUS=0,0
+PCI:RANGE[0]=02000000,2C000000,2C000000,2000000
+PCI:RANGE[1]=43000000,180800000,180800000,FE7F800000
+PCI:ROOT_BRIDGE_CREATED count=1
+PCI:ENUM_DRIVER_LOADED
+PCI:ENUM_START
+PCI:DEVICE=00:00.0 8086:1237
+PCI:DEVICE=00:01.0 1AF4:1050
+PCI:DEVICE=00:02.0 1AF4:1043
+PCI:DEVICE=00:03.0 1AF4:1043
+PCI:DEVICE=00:04.0 1AF4:1043
+PCI:DEVICE=00:05.0 1AF4:1042
+PCI:DEVICE=00:06.0 1AF4:1044
+PCI:DEVICE=00:07.0 1AF4:1045
+PCI:DEVICE=00:08.0 1AF4:1053
+PCI:DEVICE=00:09.0 1B36:0011
+PCI:DEVICE=00:00.0 8086:1237
+PCI:DEVICE=00:01.0 1AF4:1050
+PCI:DEVICE=00:02.0 1AF4:1043
+PCI:DEVICE=00:03.0 1AF4:1043
+PCI:DEVICE=00:04.0 1AF4:1043
+PCI:DEVICE=00:05.0 1AF4:1042
+PCI:DEVICE=00:06.0 1AF4:1044
+PCI:DEVICE=00:07.0 1AF4:1045
+PCI:DEVICE=00:08.0 1AF4:1053
+PCI:DEVICE=00:09.0 1B36:0011
+PCI:DEVICE=00:00.0 8086:1237
+PCI:DEVICE=00:01.0 1AF4:1050
+PCI:DEVICE=00:02.0 1AF4:1043
+PCI:DEVICE=00:03.0 1AF4:1043
+PCI:DEVICE=00:04.0 1AF4:1043
+PCI:DEVICE=00:05.0 1AF4:1042
+PCI:DEVICE=00:06.0 1AF4:1044
+PCI:DEVICE=00:07.0 1AF4:1045
+PCI:DEVICE=00:08.0 1AF4:1053
+PCI:DEVICE=00:09.0 1B36:0011
+PCI:ENUM_DONE
+[2J[04D[=3h[2J[09DPress ESCAPE for boot options AVF_BDS_PCI_SCAN status=Success count=10
+AVF_BDS_CONNECT_VBLK[5]=Success
+AVF_BDS_BLOCK_SCAN status=Success count=2
+AVF_BDS_CONNECT_BLOCK[0]=Success
+AVF_BDS_CONNECT_BLOCK[1]=Success
+AVF_BDS_FS_SCAN status=Success count=1
+AVF_BDS_START_IMAGE \EFI\BOOT\BOOTAA64.EFI fs=0
+ConvertPages: failed to find range 10000000 - 102DAFFF
+ConvertPages: failed to find range 102000 - 102FFF
