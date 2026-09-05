@@ -14,6 +14,10 @@
 - [x] GPU включён (`1AF4:1050`), а динамический boot path нашёл `1AF4:1042` на `00:05.0` и передал управление `BOOTAA64.EFI`.
 - [x] GPU Windows-loader pass: после `START_IMAGE` crosvm остался запущен и прочитал 615 600 KiB (практически весь `boot.wim`), при этом графический loader больше не зеркалирует строку `Loading files...` в serial.
 - [x] Проверен доступ к видимому WinPE после GPU-loader pass: отдельная Android surface и RFB/VNC endpoint не предоставлены текущим AVF runtime.
+- [x] Static graphics audit: ArmVirtKvmTool includes `VirtioGpuDxe`; the current GOP adaptation provides a reserved, physical BGRA LFB and preserves the virtio scanout at EBS.
+- [x] Static/runtime API audit: this resource has no ordinary-app FD/handle path; the Android native display service remains privileged-only.
+- [x] Rejected firmware-resident post-EBS relay: no autonomous UEFI runtime execution mechanism exists.
+- [x] Selected product architecture: `EARLY_WINDOWS_DISPLAY_RELAY = VIABLE` via a signed ARM64 Windows display-only relay plus public vsock and the app's own Android renderer.
 - [ ] Дойти до WinPE/Setup и получить первый видимый экран (ожидает гостевой display/input transport).
 - [ ] Отдельно, без изменения firmware: проверить, сохраняет ли AVF загрузочный диск первым (`00:04.0`) при добавлении target вторым (`00:05.0`).
 - [ ] Если порядок не сохраняется — для proof использовать один большой виртуальный диск с installer- и Windows-разделами.
@@ -33,7 +37,12 @@
 
 ## Текущий блокер для следующего шага
 
-WinPE после перехода на GOP не использует последовательный порт. GPU и dynamic boot path теперь подтверждены, но Android launcher ещё не получает guest display surface; следующий этап — найти поддерживаемый механизм вывода WinPE без добавления новых дисков или изменения boot path.
+Нативный Android display broker не доступен `untrusted_app`; нельзя считать
+virtio-gpu resource доступным Android-приложению только потому, что он
+сохраняется после EBS. Следующий шаг ограничен offline preflight: проверить
+готовый production-signed ARM64 пакет `viogpudo` + `viosock`, его INF и
+совместимость с уже подтверждённым GPU `1AF4:1050`. До этого не менять WIM,
+BCD, firmware или baseline image.
 
 Runtime r6: crosvm `crosvm_winavf-gpu-dynamic-loader-r6` остаётся жив после `BOOTAA64.EFI`; SurfaceFlinger содержит только UI launcher, а все доступные TCP listeners отклоняют RFB handshake. В API VirtualMachine также нет метода передачи guest framebuffer в Android View. Это ограничение host display transport, а не загрузочного диска, firmware или WinPE.
 

@@ -60,6 +60,59 @@ The service is listed, but `service check android.system.virtualizationservice` 
 
 Thus the ordinary AVF permissions allow the existing custom VM through the public manager path, but not the private Binder which hands a `Surface` to crosvm. Shipping generated AIDL stubs cannot fix blocked service discovery. The required change is an OEM/platform-signed bridge or a new public, permission-protected per-VM surface API; either is outside the no-root/no-system-change scope.
 
+## Graphics architecture decision
+
+**Selected research result: `EARLY_WINDOWS_DISPLAY_RELAY = VIABLE`.** This
+means viable as an architecture for a separately signed, automatically
+serviced user-supplied WinPE image; it is not yet a runtime pass.
+
+### Current GOP framebuffer
+
+The active `ArmVirtKvmTool` source explicitly includes `VirtioGpuDxe`. Its
+existing local GOP adaptation creates a virtio-gpu 2D resource, allocates its
+BGRA backing pages as `EfiReservedMemoryType`, exposes those pages through
+`GopMode.FrameBufferBase`, uses
+`PixelBlueGreenRedReserved8BitPerColor`, and leaves the virtio device running
+from its ExitBootServices callback. The pages are guest RAM; crosvm consumes
+them through `RESOURCE_ATTACH_BACKING`, `TRANSFER_TO_HOST_2D`, and `FLUSH`.
+
+This is a valid *guest-side* physical-LFB handoff candidate for Windows Basic
+Display. It is not a handle exported to WinAVF. Blob/dma-buf/AHardwareBuffer
+exports stay inside crosvm/gfxstream and its Android display backend; the
+ordinary app receives neither an FD nor a resource ID. Therefore:
+
+- `HOST_VISIBLE_PERSISTENT_FRAMEBUFFER = BLOCKED_BY_SPECIFIC_PERMISSION`
+- `CONTINUOUS_FIRMWARE_TO_WINDOWS_DISPLAY = NOT_YET_PROVEN`
+
+### Rejected short paths
+
+- `SERVICE_VCPU_DISPLAY_RELAY = NOT_A_SHORT_PATH`: AVF exposes only one CPU or
+  match-host topology, and Arm crosvm powers off non-boot vCPUs initially. A
+  resident CPU would require PSCI bring-up, memory/device exclusion from
+  Windows ACPI, independent vsock transport, and cache/device ownership rules.
+  It would also not cause Windows to keep using the GOP buffer.
+- `POST_EBS_RESIDENT_FIRMWARE_RELAY = NOT_VIABLE`: UEFI runtime code has no
+  autonomous scheduler after EBS. Boot-service events/timers are terminated;
+  runtime code runs only when Windows invokes a Runtime Service. Baseline also
+  established `SetVirtualAddressMap = NOT_CALLED`.
+
+### Product path
+
+The ordinary app can create its own Android `Surface` and has public VM-vsock
+APIs, while the Windows virtio driver project ships ARM64 `viogpudo` (a WDDM
+display-only driver) and `viosock` packages. WinPE accepts offline driver
+packages and runs PnP during its boot. The feasible product shape is therefore
+an automatically serviced boot.wim containing a production-signed ARM64
+display-only relay plus a vsock producer; WinAVF renders the received dirty
+BGRA tiles to its own Surface. It does not depend on the privileged Android
+display broker and can become visible during Setup.
+
+Before altering any WIM, the next PoC is an **offline-only** driver-package
+preflight: verify a production-signed ARM64 `viogpudo`/`viosock` package and
+that its INF matches the already observed `PCI\\VEN_1AF4&DEV_1050` GPU. If it
+passes, make one cloned-media PnP acceptance test. No firmware, BCD, FAT, or
+baseline image change is authorized by this research result.
+
 ## Repository support
 
 `android-app/src/com/example/winavf/MainActivity.java` has an opt-in read-only `display_host_audit` intent/UI action. It creates no VM, waits for no service, and submits no Surface. It records the calling UID, permission grants, service lookup result, and internal class visibility.
@@ -74,6 +127,8 @@ Thus the ordinary AVF permissions allow the existing custom VM through the publi
 
 No APK, Windows image, ISO, WIM, or other proprietary binary is tracked here.
 
-## Next cheapest experiment
+## Pre-OTA snapshot
 
-Do not build the framebuffer/vsock fallback yet. If an OEM/platform-signed bridge or documented public AVF Surface API becomes available, rerun `display_host_audit` from that permitted identity. A non-null internal service Binder is the gate before a minimal `SurfaceView -> setSurface()` graphical-UEFI PoC.
+Read-only device evidence was captured before the pending Samsung reboot. See
+`docs/DEVICE_PRE_OTA_SNAPSHOT_2026-09-05.md`. No OTA, system, APEX, firmware,
+Windows-media, or VM state was modified.
