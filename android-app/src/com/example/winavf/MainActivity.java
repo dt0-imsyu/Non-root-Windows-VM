@@ -40,11 +40,15 @@ public final class MainActivity extends Activity {
         Button start = new Button(this);
         start.setText("Start kernel-first loader test");
         start.setOnClickListener(v -> new Thread(this::startTest, "WinAVF-start").start());
+        Button displayAudit = new Button(this);
+        displayAudit.setText("Audit native AVF display access");
+        displayAudit.setOnClickListener(v -> new Thread(this::auditNativeAvfDisplayAccess, "WinAVF-display-audit").start());
         status = new TextView(this);
         status.setText("Ready. Headless Windows ARM64 installer: serial/EDK2/disks only; no Android guest surface.");
         ScrollView scroll = new ScrollView(this);
         scroll.addView(status);
         page.addView(start);
+        page.addView(displayAudit);
         page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(page);
         if (getIntent().getBooleanExtra("start", false)) {
@@ -52,6 +56,9 @@ public final class MainActivity extends Activity {
         }
         if (getIntent().getBooleanExtra("audit", false)) {
             new Thread(this::auditVirtualizationCapabilities, "WinAVF-audit").start();
+        }
+        if (getIntent().getBooleanExtra("display_host_audit", false)) {
+            new Thread(this::auditNativeAvfDisplayAccess, "WinAVF-display-audit").start();
         }
     }
 
@@ -112,6 +119,51 @@ public final class MainActivity extends Activity {
             return;
         }
         show("AVF capability audit saved to " + report.getAbsolutePath());
+    }
+
+    /**
+     * Read-only reachability check for the Android 16 Terminal display path.
+     * It never creates a VM, calls waitDisplayService(), or submits a Surface.
+     * The report distinguishes a hidden-API/class-loader restriction from a
+     * missing virtualization-service Binder without perturbing a running VM.
+     */
+    private void auditNativeAvfDisplayAccess() {
+        File report = new File(getExternalFilesDir(null), "native-avf-display-access-audit.txt");
+        try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+            out.println("fingerprint=" + android.os.Build.FINGERPRINT);
+            out.println("uid=" + android.os.Process.myUid());
+            out.println("permission.MANAGE_VIRTUAL_MACHINE="
+                    + checkSelfPermission("android.permission.MANAGE_VIRTUAL_MACHINE"));
+            out.println("permission.USE_CUSTOM_VIRTUAL_MACHINE="
+                    + checkSelfPermission("android.permission.USE_CUSTOM_VIRTUAL_MACHINE"));
+
+            Class<?> serviceManager = Class.forName("android.os.ServiceManager");
+            out.println("CLASS android.os.ServiceManager=AVAILABLE");
+            Method getService = serviceManager.getMethod("getService", String.class);
+            out.println("METHOD ServiceManager.getService=AVAILABLE");
+            Object service = getService.invoke(null, "android.system.virtualizationservice");
+            out.println("BINDER android.system.virtualizationservice="
+                    + (service == null ? "NULL" : "AVAILABLE:" + service.getClass().getName()));
+
+            for (String name : new String[] {
+                    "android.system.virtualizationservice_internal.IVirtualizationServiceInternal",
+                    "android.system.virtualizationservice_internal.IVirtualizationServiceInternal$Stub",
+                    "android.crosvm.ICrosvmAndroidDisplayService",
+                    "android.crosvm.ICrosvmAndroidDisplayService$Stub"
+            }) {
+                try {
+                    Class.forName(name);
+                    out.println("CLASS " + name + "=AVAILABLE");
+                } catch (Throwable error) {
+                    out.println("CLASS " + name + "=UNAVAILABLE:" + rootMessage(error));
+                }
+            }
+            out.println("RESULT=READ_ONLY_HOST_PATH_AUDIT_COMPLETE");
+        } catch (Throwable error) {
+            show("Native AVF display access audit failed: " + rootMessage(error));
+            return;
+        }
+        show("Native AVF display access audit saved to " + report.getAbsolutePath());
     }
 
     private void startTest() {
