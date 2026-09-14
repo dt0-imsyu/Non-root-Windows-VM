@@ -71,6 +71,14 @@ public final class MainActivity extends Activity {
     private ScrollView logPanel;
     private ConsoleFrameDecoder frameDecoder;
     private boolean frameVisible;
+    // A product-path UEFI input probe uses the already-proven serial stream,
+    // not an unimplemented input driver. This becomes true only after EDK2
+    // emits its real Boot Options prompt on that stream.
+    private volatile boolean bootOptionsPromptSeen;
+    private volatile boolean serialInputWindowSeen;
+    private volatile boolean serialEscapeAcknowledged;
+    private volatile int observedFrameCount;
+    private final StringBuilder serialProbeTail = new StringBuilder();
     private final StringBuilder uiLog = new StringBuilder();
     private volatile Socket activeKdBridgeSocket;
     private volatile Object activeKdBridgeVm;
@@ -109,6 +117,7 @@ public final class MainActivity extends Activity {
 
         frameDecoder = new ConsoleFrameDecoder(new ConsoleFrameDecoder.Listener() {
             @Override public void onFrame(ConsoleFrameDecoder.Frame frame) {
+                observedFrameCount++;
                 runOnUiThread(() -> {
                     frameSurface.present(frame);
                     // The guest retains the complete canvas. Controls collapse
@@ -259,6 +268,9 @@ public final class MainActivity extends Activity {
         }
         if (intent.getBooleanExtra("uefi_input_probe", false)) {
             new Thread(this::startUefiInputProbe, "WinAVF-uefi-input").start();
+        }
+        if (intent.getBooleanExtra("uefi_serial_escape_probe", false)) {
+            new Thread(this::startUefiSerialEscapeProbe, "WinAVF-uefi-serial-escape").start();
         }
         if (intent.getBooleanExtra("vsock_hello_probe", false)) {
             new Thread(this::startVsockHelloProbe, "WinAVF-vsock-hello").start();
@@ -655,21 +667,36 @@ public final class MainActivity extends Activity {
     private static String hex(byte[] bytes) { return java.util.HexFormat.of().formatHex(bytes).toUpperCase(java.util.Locale.ROOT); }
 
     private void startTest() {
-        startTest(false, false);
+        startTest(false, false, false);
     }
 
     /** One opt-in host-to-virtio-keyboard probe; it never alters guest media. */
     private void startUefiInputProbe() {
-        startTest(true, false);
+        startTest(true, false, false);
+    }
+
+    /**
+     * One product-topology probe for the standard EDK2 serial ConIn path.
+     * The console's TX side can batch an idle-window marker until that window
+     * ends. After the earlier Boot Options prompt, send a bounded low-rate ESC
+     * stream until firmware acknowledges actual ConIn consumption.
+     */
+    private void startUefiSerialEscapeProbe() {
+        startTest(false, false, true);
     }
 
     /** One opt-in post-EBS raw-vsock HELLO probe; it never sends input events. */
     private void startVsockHelloProbe() {
-        startTest(false, true);
+        startTest(false, true, false);
     }
 
-    private void startTest(boolean enableKeyboardProbe, boolean enableVsockHelloProbe) {
+    private void startTest(boolean enableKeyboardProbe, boolean enableVsockHelloProbe, boolean enableSerialEscapeProbe) {
         try {
+            bootOptionsPromptSeen = false;
+            serialInputWindowSeen = false;
+            serialEscapeAcknowledged = false;
+            observedFrameCount = 0;
+            serialProbeTail.setLength(0);
             show("Preparing app-private kernel-style loader…");
             File payload = new File(getFilesDir(), "payload");
             if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create payload directory");
@@ -706,6 +733,7 @@ public final class MainActivity extends Activity {
             startConsoleReader(console);
             vm.getClass().getMethod("run").invoke(vm);
             if (enableKeyboardProbe) startEscInputProbe(vm);
+            if (enableSerialEscapeProbe) startSerialEscapeInputProbe(vm);
             if (enableVsockHelloProbe) startVsockHelloProbe(vm);
             startWinpeMarkerReporter(esp);
             show("VM launched. Waiting for kernel-first serial output…");
@@ -1042,6 +1070,57 @@ public final class MainActivity extends Activity {
         }, "WinAVF-esc-input-probe").start();
     }
 
+    private void startSerialEscapeInputProbe(Object vm) {
+        new Thread(() -> {
+            File report = new File(getExternalFilesDir(null), "uefi-serial-escape-probe-report.txt");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("transport=APP_CONSOLE_INPUT_TO_EDK2_SERIAL_CONIN");
+                out.println("expectedPrompt=Press ESCAPE for boot options");
+                out.println("mode=BOUNDED_PERIODIC_ESC_UNTIL_FIRMWARE_ACK");
+                long promptDeadline = System.currentTimeMillis() + 15_000L;
+                while (!bootOptionsPromptSeen && System.currentTimeMillis() < promptDeadline) {
+                    Thread.sleep(25);
+                }
+                out.println("promptSeen=" + bootOptionsPromptSeen);
+                if (!bootOptionsPromptSeen) {
+                    out.println("result=NOT_SENT_PROMPT_NOT_OBSERVED");
+                    show("UEFI serial input probe: prompt was not observed; ESC was not sent.");
+                    return;
+                }
+                int before = observedFrameCount;
+                OutputStream input = (OutputStream) vm.getClass().getMethod("getConsoleInput").invoke(vm);
+                out.println("payloadHex=1B");
+                out.println("framesBefore=" + before);
+                int writes = 0;
+                long sendDeadline = System.currentTimeMillis() + 55_000L;
+                while (!serialEscapeAcknowledged && System.currentTimeMillis() < sendDeadline) {
+                    input.write(0x1b);
+                    input.flush();
+                    writes++;
+                    Thread.sleep(250L);
+                }
+                out.println("uartWrites=" + writes);
+                out.println("uartWrite=" + (writes > 0 ? "PASS" : "NOT_SENT"));
+                show("UEFI serial input probe: bounded ESC stream finished.");
+                Thread.sleep(3_000L);
+                int after = observedFrameCount;
+                out.println("framesAfter=" + after);
+                out.println("firmwareEscapeAcknowledged=" + serialEscapeAcknowledged);
+                out.println("result=" + (serialEscapeAcknowledged && after > before
+                        ? "UEFI_SERIAL_INPUT_AND_GRAPHICS_RESPONSE_PASS"
+                        : serialEscapeAcknowledged ? "UEFI_SERIAL_INPUT_PASS_FRAME_NOT_OBSERVED"
+                        : "UART_WRITE_PASS_RESPONSE_NOT_OBSERVED"));
+            } catch (Throwable error) {
+                try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                    out.println("transport=APP_CONSOLE_INPUT_TO_EDK2_SERIAL_CONIN");
+                    out.println("result=ERROR");
+                    out.println("error=" + rootMessage(error));
+                } catch (Throwable ignored) { }
+                show("UEFI serial input probe failed: " + rootMessage(error));
+            }
+        }, "WinAVF-serial-escape-probe").start();
+    }
+
     /** Applies only a self-verifying range bundle to the preserved private copy. */
     private void applyStagedImagePatch(File payload, File image) throws Exception {
         File staging = new File(getExternalFilesDir(null), IMAGE_PATCH_STAGING_NAME);
@@ -1265,6 +1344,7 @@ public final class MainActivity extends Activity {
                     rawLog.flush();
                     frameDecoder.feed(buffer, 0, n);
                     String text = new String(buffer, 0, n, java.nio.charset.StandardCharsets.UTF_8);
+                    observeUefiBootOptionsPrompt(text);
                     // U-Boot emits many one-byte console writes.  Rendering each one on
                     // Android's UI thread starves the VM and truncates the useful EDK2 log.
                     if (text.indexOf('\n') >= 0) {
@@ -1275,6 +1355,24 @@ public final class MainActivity extends Activity {
                 show("Console closed: " + rootMessage(t));
             }
         }, "WinAVF-console").start();
+    }
+
+    private void observeUefiBootOptionsPrompt(String text) {
+        synchronized (serialProbeTail) {
+            serialProbeTail.append(text);
+            if (serialProbeTail.length() > 256) {
+                serialProbeTail.delete(0, serialProbeTail.length() - 256);
+            }
+            if (serialProbeTail.indexOf("Press ESCAPE for boot options") >= 0) {
+                bootOptionsPromptSeen = true;
+            }
+            if (serialProbeTail.indexOf("AVF_UEFI_INPUT_WINDOW") >= 0) {
+                serialInputWindowSeen = true;
+            }
+            if (serialProbeTail.indexOf("AVF_UEFI_ESC_RECEIVED") >= 0) {
+                serialEscapeAcknowledged = true;
+            }
+        }
     }
 
     /** Reads a marker written by WinPE from the FAT root; it never writes guest media. */

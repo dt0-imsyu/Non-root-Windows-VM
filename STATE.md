@@ -1,5 +1,27 @@
 # WinAVF state — 2026-09-14
 
+## Product UEFI serial-input boundary — 2026-09-14
+
+The final r10/r11 app-owned product experiment closes the proposed serial
+input route for now.  `getConsoleInput()` is available and accepts writes; an
+earlier disposable byte-loopback control is byte exact.  But on the actual
+Windows product topology, 220 flushed ESC bytes spanning r11's exact 30-second
+EDK2 `SimpleTextIn` polling window produced no firmware acknowledgement and no
+extra GOP response frame.  The original external image was rolled back and
+verified exactly after the run.
+
+```text
+APP_OWNED_CONSOLE_INPUT_WRITE       = PASS
+PRODUCT_TTYS0_TO_EDK2_SIMPLETEXTIN  = NOT_CONFIRMED
+AVF_UEFI_SERIAL_INPUT_TRANSPORT     = BLOCKED_ON_PRODUCT_TOPOLOGY
+GRAPHICAL_UEFI_INPUT                = NOT_CONFIRMED
+```
+
+Do not present serial arrow/Enter control as a product feature.  The existing
+pre-EBS GOP renderer remains valid; an app Stop action can be built separately
+from guest input.  Full evidence:
+`docs/UEFI_SERIAL_INPUT_R10_R11_RUNTIME_2026-09-14.md`.
+
 ## Remaining post-EBS options — 2026-09-14
 
 The independent API, trace, QEMU-contract and synthetic-platform audits now
