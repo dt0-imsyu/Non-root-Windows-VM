@@ -157,13 +157,13 @@ public final class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1f));
 
-        Button launch = button("Запуск");
+        Button launch = button("Launch");
         launch.setOnClickListener(v -> new Thread(this::startTest, "WinAVF-ui-start").start());
         toolbar.addView(launch, new LinearLayout.LayoutParams(-2, dp(44)));
-        Button settings = button("Настройки");
+        Button settings = button("Settings");
         settings.setOnClickListener(v -> toggleSettings());
         toolbar.addView(settings, new LinearLayout.LayoutParams(-2, dp(44)));
-        Button logs = button("Логи");
+        Button logs = button("Logs");
         logs.setOnClickListener(v -> toggleLogs());
         toolbar.addView(logs, new LinearLayout.LayoutParams(-2, dp(44)));
         FrameLayout.LayoutParams toolbarLayout = new FrameLayout.LayoutParams(-1, dp(60), Gravity.TOP);
@@ -176,12 +176,12 @@ public final class MainActivity extends Activity {
         TextView settingsText = new TextView(this);
         settingsText.setTextColor(Color.LTGRAY);
         settingsText.setTextSize(14);
-        settingsText.setText("Профиль запуска\n\n"
-                + "• 1 vCPU · проверенная AVF-топология\n"
-                + "• EDK2 GOP → защищённый WAVF display\n"
-                + "• Windows media проверяется перед запуском\n"
-                + "• Изменения образа применяются только транзакционно\n\n"
-                + "Аппаратные параметры зафиксированы: случайное изменение CPU, ACPI, BCD или таймеров отключено.");
+        settingsText.setText("Launch profile\n\n"
+                + "• 1 vCPU · verified AVF topology\n"
+                + "• EDK2 GOP → protected WAVF display\n"
+                + "• Windows media is verified before launch\n"
+                + "• Image changes use a transactional path only\n\n"
+                + "Hardware settings are locked. CPU, ACPI, BCD and timer experiments are intentionally disabled.");
         settingsPanel.addView(settingsText, new LinearLayout.LayoutParams(-1, -2));
         settingsPanel.setVisibility(View.GONE);
         FrameLayout.LayoutParams settingsLayout = new FrameLayout.LayoutParams(dp(330), -2, Gravity.TOP | Gravity.END);
