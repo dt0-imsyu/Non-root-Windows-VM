@@ -1,5 +1,23 @@
 # WinAVF state — 2026-09-14
 
+## Remaining post-EBS options — 2026-09-14
+
+The independent API, trace, QEMU-contract and synthetic-platform audits now
+establish the following operational boundary:
+
+```text
+LOCAL_NO_ROOT_WINDOWS_POST_EBS_ROOT_CAUSE_PATH = EXHAUSTED
+PRODUCT_DEVELOPMENT_PATH                       = ACTIVE
+```
+
+No further BCD/KD/ftrace/GDB/WIM/ACPI/CPU-mask variation is justified without
+a new supported platform capability. The correct next diagnostic owner is the
+Samsung/GenieZone firmware path; the submitted physical-timer report requests
+a vCPU timer repair or a supported trace/debug channel. A firmware/OTA
+regression control and a second-device AVF control remain valid future tests.
+Evidence and strict branch closure are in
+`docs/REMAINING_POST_EBS_OPTIONS_2026-09-14.md`.
+
 ## QEMU accepted-platform contract — 2026-09-14
 
 The one diskless QEMU v5 capture completed with `exit 0`, checksum-valid
