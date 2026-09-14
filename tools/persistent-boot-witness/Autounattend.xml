@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Disposable persistent-boot-witness configuration.
+
+  It contains no BCD setting, no driver, no script, no WIM change and no
+  destructive disk operation.  In the windowsPE pass Setup assigns the only
+  existing FAT32 ESP (disk 0, partition 1) the deterministic letter C: and
+  moves its own Windows-PE configuration log to the root of that volume.
+
+  Presence of C:\SETUPACT.LOG or C:\SETUPERR.LOG after a stopped VM is a
+  positive witness that Microsoft Windows Setup ran.  It is not an assertion
+  about the exact kernel instruction at which execution began.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>false</WillWipeDisk>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+        <WillShowUI>OnError</WillShowUI>
+      </DiskConfiguration>
+      <LogPath>C:\</LogPath>
+    </component>
+  </settings>
+</unattend>

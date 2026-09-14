@@ -1,0 +1,16 @@
+{
+  "name": "winavf-shell-r11-bcd-control-20260908",
+  "kernel": "/data/local/tmp/winavf-shell-r11-bcd-control-20260908/u-boot-wrapper-v24.Image",
+  "params": "",
+  "disks": [
+    {
+      "image": "/data/local/tmp/winavf-shell-r11-bcd-control-20260908/win11-r11-bcd-control.img",
+      "writable": true
+    }
+  ],
+  "protected": false,
+  "memory_mib": 4096,
+  "cpu_topology": "one_cpu",
+  "console_input_device": "ttyS0",
+  "platform_version": "~1.0"
+}

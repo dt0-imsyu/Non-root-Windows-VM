@@ -1,0 +1,16 @@
+{
+  "name": "winavf-shell-gdb-pc-20260909",
+  "kernel": "/data/local/tmp/winavf-shell-gdb-pc-20260909/u-boot-wrapper-v24.Image",
+  "params": "",
+  "disks": [
+    {
+      "image": "/data/local/tmp/winavf-shell-gdb-pc-20260909/win11-baseline.img",
+      "writable": false
+    }
+  ],
+  "protected": false,
+  "memory_mib": 4096,
+  "cpu_topology": "one_cpu",
+  "console_input_device": "ttyS0",
+  "platform_version": "~1.0"
+}

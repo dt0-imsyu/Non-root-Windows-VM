@@ -1,0 +1,7 @@
+create vdisk file="D:\qemu-contract-probe-20260913.vhd" maximum=128 type=fixed
+select vdisk file="D:\qemu-contract-probe-20260913.vhd"
+attach vdisk
+convert gpt
+create partition efi
+format quick fs=fat32 label="QCP"
+assign letter=Q

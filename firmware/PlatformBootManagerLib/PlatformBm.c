@@ -17,6 +17,7 @@
 #include <Library/DevicePathLib.h>
 #include <Library/HobLib.h>
 #include <Library/PcdLib.h>
+#include <Library/SerialPortLib.h>
 #include <Library/UefiBootManagerLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -40,6 +41,121 @@
 #include "PlatformBm.h"
 
 #define DP_NODE_LEN(Type)  { (UINT8)sizeof (Type), (UINT8)(sizeof (Type) >> 8) }
+
+#define AVF_FRAME_WIDTH   320
+#define AVF_FRAME_HEIGHT  200
+
+STATIC
+UINT32
+AvfFrameCrc32 (
+  IN CONST UINT8  *Data,
+  IN UINTN         Size
+  )
+{
+  UINT32  Crc;
+  UINTN   Index;
+  UINTN   Bit;
+
+  Crc = 0xFFFFFFFFU;
+  for (Index = 0; Index < Size; ++Index) {
+    Crc ^= Data[Index];
+    for (Bit = 0; Bit < 8; ++Bit) {
+      Crc = (Crc >> 1) ^ (0xEDB88320U & (-(INT32)(Crc & 1U)));
+    }
+  }
+  return ~Crc;
+}
+
+STATIC
+VOID
+AvfFramePutLe16 (
+  OUT UINT8  *Target,
+  IN UINT16    Value
+  )
+{
+  Target[0] = (UINT8)Value;
+  Target[1] = (UINT8)(Value >> 8);
+}
+
+STATIC
+VOID
+AvfFramePutLe32 (
+  OUT UINT8  *Target,
+  IN UINT32    Value
+  )
+{
+  Target[0] = (UINT8)Value;
+  Target[1] = (UINT8)(Value >> 8);
+  Target[2] = (UINT8)(Value >> 16);
+  Target[3] = (UINT8)(Value >> 24);
+}
+
+// Emit one bounded GOP keyframe over the app-readable console pipe. This is a
+// proof transport; later revisions can replace the payload with dirty tiles.
+STATIC
+EFI_STATUS
+AvfEmitGopKeyframe (
+  IN EFI_GRAPHICS_OUTPUT_PROTOCOL  *GraphicsOutput
+  )
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Pixels;
+  UINT8                          Header[28];
+  UINTN                          PixelCount;
+  UINTN                          Index;
+  UINT32                         Crc;
+  EFI_STATUS                     Status;
+
+  if (GraphicsOutput == NULL || GraphicsOutput->Mode == NULL ||
+      GraphicsOutput->Mode->Info == NULL ||
+      GraphicsOutput->Mode->Info->HorizontalResolution < AVF_FRAME_WIDTH ||
+      GraphicsOutput->Mode->Info->VerticalResolution < AVF_FRAME_HEIGHT)
+  {
+    return EFI_UNSUPPORTED;
+  }
+
+  PixelCount = AVF_FRAME_WIDTH * AVF_FRAME_HEIGHT;
+  Pixels = AllocatePool (PixelCount * sizeof (*Pixels));
+  if (Pixels == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = GraphicsOutput->Blt (
+                              GraphicsOutput,
+                              Pixels,
+                              EfiBltVideoToBltBuffer,
+                              0,
+                              0,
+                              0,
+                              0,
+                              AVF_FRAME_WIDTH,
+                              AVF_FRAME_HEIGHT,
+                              0
+                              );
+  if (EFI_ERROR (Status)) {
+    FreePool (Pixels);
+    return Status;
+  }
+
+  SetMem (Header, sizeof (Header), 0);
+  AvfFramePutLe32 (Header + 0, 0x46564157U); // WAVF
+  Header[4] = 1;                              // version
+  Header[5] = 1;                              // keyframe
+  AvfFramePutLe16 (Header + 8, AVF_FRAME_WIDTH);
+  AvfFramePutLe16 (Header + 10, AVF_FRAME_HEIGHT);
+  AvfFramePutLe32 (Header + 12, 1);            // sequence
+  AvfFramePutLe32 (Header + 16, (UINT32)(PixelCount * 4));
+
+  // EFI BLT pixels are already B,G,R,Reserved. Force opaque alpha for Android.
+  for (Index = 0; Index < PixelCount; ++Index) {
+    Pixels[Index].Reserved = 0xFF;
+  }
+  Crc = AvfFrameCrc32 ((CONST UINT8 *)Pixels, PixelCount * 4);
+  AvfFramePutLe32 (Header + 20, Crc);
+  SerialPortWrite (Header, sizeof (Header));
+  SerialPortWrite ((UINT8 *)Pixels, PixelCount * 4);
+  FreePool (Pixels);
+  return EFI_SUCCESS;
+}
 
 #pragma pack (1)
 typedef struct {
@@ -1213,8 +1329,22 @@ PlatformBootManagerAfterConsole (
         NULL,
         VERSION_STRING_PREFIX L"%s",
         PcdGetPtr (PcdFirmwareVersionString)
-        );
+      );
     }
+  }
+
+  // First end-to-end graphics transport proof. The Android app scans the same
+  // captured console stream for the WAVF record and renders it locally.
+  Status = gBS->HandleProtocol (
+                  gST->ConsoleOutHandle,
+                  &gEfiGraphicsOutputProtocolGuid,
+                  (VOID **)&GraphicsOutput
+                  );
+  if (!EFI_ERROR (Status)) {
+    Status = AvfEmitGopKeyframe (GraphicsOutput);
+    Print (L"AVF_GOP_FRAME status=%r size=%ux%u\n", Status, AVF_FRAME_WIDTH, AVF_FRAME_HEIGHT);
+  } else {
+    Print (L"AVF_GOP_FRAME status=%r\n", Status);
   }
 
   //

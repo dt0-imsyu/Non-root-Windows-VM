@@ -1,0 +1,10 @@
+{
+  "kernel": "/data/local/tmp/winavf-shell-t-framed-loopback-20260907/winavf-shell-serial-loopback.Image",
+  "params": "",
+  "disks": [],
+  "protected": false,
+  "memory_mib": 128,
+  "cpu_topology": "one_cpu",
+  "console_input_device": "ttyS0",
+  "platform_version": "~1.0"
+}

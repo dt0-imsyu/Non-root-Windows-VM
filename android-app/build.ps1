@@ -3,23 +3,29 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
 $buildTools = Join-Path $sdk 'build-tools\36.0.0'
 $androidJar = Join-Path $sdk 'platforms\android-36\android.jar'
+$ndkBin = Join-Path $sdk 'ndk\28.2.13676358\toolchains\llvm\prebuilt\windows-x86_64\bin'
 $javaHome = 'C:\Program Files\Android\Android Studio\jbr\bin'
 $env:JAVA_HOME = Split-Path -Parent $javaHome
 $env:Path = "$javaHome;$env:Path"
 $out = Join-Path $root 'out'
 Push-Location $root
 New-Item -ItemType Directory -Force -Path $out, (Join-Path $out 'classes'), (Join-Path $out 'assets'), (Join-Path $out 'dex') | Out-Null
-$ndkBin = Join-Path $sdk 'ndk\28.2.13676358\toolchains\llvm\prebuilt\windows-x86_64\bin'
-$loaderSource = Join-Path $root 'kernel-first\u-boot-wrapper.S'
-$loaderObject = Join-Path $out 'u-boot-wrapper.o'
+if (-not (Test-Path -LiteralPath (Join-Path $ndkBin 'clang.exe'))) { throw "Android NDK toolchain missing: $ndkBin" }
+$knownGoodWrapper = Join-Path $root '..\..\handoff-compact-2026-08-23\handoff-compact-2026-08-23\winavf-test\out\assets\u-boot-wrapper-v24.Image'
 $loaderImage = Join-Path $out 'assets\u-boot-wrapper-v24.Image'
-& (Join-Path $ndkBin 'clang.exe') --target=aarch64-none-elf -c $loaderSource -o $loaderObject
-$LASTEXITCODE -eq 0 -or (throw 'kernel-first loader assembly failed')
-& (Join-Path $ndkBin 'ld.lld.exe') -m aarch64elf -Ttext=0 -o (Join-Path $out 'u-boot-wrapper.elf') $loaderObject
-$LASTEXITCODE -eq 0 -or (throw 'kernel-first loader link failed')
-& (Join-Path $ndkBin 'llvm-objcopy.exe') -O binary (Join-Path $out 'u-boot-wrapper.elf') $loaderImage
-$LASTEXITCODE -eq 0 -or (throw 'kernel-first loader conversion failed')
-Copy-Item (Join-Path $root '..\win-bootaa64-bcd-gpt-esp.img') (Join-Path $out 'assets\win-bootaa64-bcd-gpt-esp.img') -Force
+if (-not (Test-Path -LiteralPath $knownGoodWrapper)) { throw "Known-good U-Boot wrapper missing: $knownGoodWrapper" }
+if ((Get-FileHash -LiteralPath $knownGoodWrapper -Algorithm SHA256).Hash -ne '93EDA7C4BD54C33F85ADA6F05158C74EC6F5C3232F5CBA73846E5B442895F234') { throw 'Known-good U-Boot wrapper hash mismatch.' }
+Copy-Item -LiteralPath $knownGoodWrapper -Destination $loaderImage -Force
+$echoSource = Join-Path $root 'kernel-first\console-binary-echo.S'
+$echoObject = Join-Path $out 'console-binary-echo.o'
+$echoElf = Join-Path $out 'console-binary-echo.elf'
+$echoImage = Join-Path $out 'assets\console-binary-echo.Image'
+& (Join-Path $ndkBin 'clang.exe') --target=aarch64-none-elf -c $echoSource -o $echoObject
+$LASTEXITCODE -eq 0 -or (throw 'console binary-echo assembly failed')
+& (Join-Path $ndkBin 'ld.lld.exe') -m aarch64elf -Ttext=0 -o $echoElf $echoObject
+$LASTEXITCODE -eq 0 -or (throw 'console binary-echo link failed')
+& (Join-Path $ndkBin 'llvm-objcopy.exe') -O binary $echoElf $echoImage
+$LASTEXITCODE -eq 0 -or (throw 'console binary-echo conversion failed')
 & (Join-Path $buildTools 'aapt2.exe') link -I $androidJar --manifest (Join-Path $root 'AndroidManifest.xml') -A (Join-Path $out 'assets') --min-sdk-version 36 --target-sdk-version 36 -o (Join-Path $out 'unsigned.apk')
 $LASTEXITCODE -eq 0 -or (throw 'aapt2 failed')
 $sources = Get-ChildItem (Join-Path $root 'src') -Recurse -Filter '*.java' | Select-Object -ExpandProperty FullName

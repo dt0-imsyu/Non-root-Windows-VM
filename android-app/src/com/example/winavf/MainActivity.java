@@ -1,19 +1,33 @@
 package com.example.winavf;
 
 import android.app.Activity;
+import android.graphics.Color;
 import android.system.Os;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.RandomAccessFile;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Field;
@@ -21,45 +35,298 @@ import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.security.MessageDigest;
+import java.util.zip.CRC32;
 
 /** Minimal custom-AVF launcher. Hidden AVF classes are resolved at runtime. */
 public final class MainActivity extends Activity {
-    private static final String VM_NAME = "winavf-winpe-userland-r11";
+    // Preserve the known-good launcher/media contract while adding only the
+    // app-owned WAVF decoder surface.
+    private static final String VM_NAME = "winavf-gop-ebs-r1";
+    // This name is reserved for the hidden-API console-input capability probe.
+    // It never starts a guest and is always deleted before the probe returns.
+    private static final String CONSOLE_INPUT_PROBE_VM_NAME = "winavf-console-input-probe-20260909";
+    private static final String CONSOLE_BINARY_ECHO_VM_NAME = "winavf-console-binary-echo-20260909";
+    private static final byte[] CONSOLE_BINARY_ECHO_READY = "WINAVF_ECHO_READY\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final int CONSOLE_BINARY_ECHO_BYTES = 4096;
+    // localhost-only, diagnostic-only endpoint.  A fresh capability token is
+    // supplied by the host bridge for every run; no guest data is transformed.
+    private static final int KD_BRIDGE_PORT = 39100;
     private static final long WINDOWS_TARGET_SIZE = 64L * 1024L * 1024L * 1024L;
     private static final String HEADLESS_SETUP_MEDIA_NAME = "win11-headless-installer-10g.img";
     private static final long HEADLESS_SETUP_MEDIA_MIN_SIZE = 7L * 1024L * 1024L * 1024L;
     private static final String HEADLESS_SETUP_MEDIA_REVISION = "r3-efi-gpt";
-    private static final String HEADLESS_BOOT_MEDIA_NAME = "win11-winpe-userland-r4.img";
+    private static final String HEADLESS_BOOT_MEDIA_NAME = "win11-gop-ebs-r1.img";
     private static final long HEADLESS_BOOT_MEDIA_SIZE = 9_126_805_504L;
+    private static final String HEADLESS_BOOT_MEDIA_SHA256 = "2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7";
+    private static final String IMAGE_PATCH_STAGING_NAME = "winavf-image-patch.bin";
+    private static final String IMAGE_PATCH_ACTIVE_NAME = "active-image-patch.bin";
+    private static final byte[] IMAGE_PATCH_MAGIC = "WAVFPAT1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private TextView status;
+    private TextView logText;
+    private FrameSurfaceView frameSurface;
+    private FrameLayout page;
+    private LinearLayout toolbar;
+    private LinearLayout settingsPanel;
+    private ScrollView logPanel;
+    private ConsoleFrameDecoder frameDecoder;
+    private boolean frameVisible;
+    private final StringBuilder uiLog = new StringBuilder();
+    private volatile Socket activeKdBridgeSocket;
+    private volatile Object activeKdBridgeVm;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout page = new LinearLayout(this);
-        page.setOrientation(LinearLayout.VERTICAL);
-        Button start = new Button(this);
-        start.setText("Start kernel-first loader test");
-        start.setOnClickListener(v -> new Thread(this::startTest, "WinAVF-start").start());
-        Button displayAudit = new Button(this);
-        displayAudit.setText("Audit native AVF display access");
-        displayAudit.setOnClickListener(v -> new Thread(this::auditNativeAvfDisplayAccess, "WinAVF-display-audit").start());
+
+        // The app is now a guest-display surface, not a test-control panel.
+        // Start/rollback/audit remain available through their existing explicit
+        // intent extras, so this removes no launch or rollback capability.
+        getWindow().setDecorFitsSystemWindows(false);
+        WindowInsetsController insets = getWindow().getDecorView().getWindowInsetsController();
+        if (insets != null) {
+            insets.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            insets.setSystemBarsBehavior(
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+        page = new FrameLayout(this);
+        page.setBackgroundColor(Color.BLACK);
+
+        frameSurface = new FrameSurfaceView(this);
+        page.addView(frameSurface, new FrameLayout.LayoutParams(-1, -1));
+
         status = new TextView(this);
-        status.setText("Ready. Headless Windows ARM64 installer: serial/EDK2/disks only; no Android guest surface.");
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(status);
-        page.addView(start);
-        page.addView(displayAudit);
-        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        status.setText("Ready");
+        status.setTextColor(Color.LTGRAY);
+        status.setTextSize(12);
+        status.setSingleLine(true);
+        status.setEllipsize(TextUtils.TruncateAt.END);
+        status.setPadding(16, 8, 16, 8);
+        status.setBackgroundColor(0x99000000);
+        FrameLayout.LayoutParams statusLayout = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        page.addView(status, statusLayout);
+
+        addProductControls();
+
+        frameDecoder = new ConsoleFrameDecoder(new ConsoleFrameDecoder.Listener() {
+            @Override public void onFrame(ConsoleFrameDecoder.Frame frame) {
+                runOnUiThread(() -> {
+                    frameSurface.present(frame);
+                    // The guest retains the complete canvas. Controls collapse
+                    // to a small menu affordance after its first real frame.
+                    frameVisible = true;
+                    status.setVisibility(View.GONE);
+                    toolbar.setVisibility(View.GONE);
+                    settingsPanel.setVisibility(View.GONE);
+                    logPanel.setVisibility(View.GONE);
+                });
+            }
+            @Override public void onProtocolError(String message) {
+                // Serial text and frame records share one pipe; malformed records are recoverable.
+            }
+        });
         setContentView(page);
-        if (getIntent().getBooleanExtra("start", false)) {
+        handleIntentActions(getIntent());
+    }
+
+    /** Compact product controls; all diagnostic actions remain intent-only. */
+    private void addProductControls() {
+        Button menu = button("☰");
+        menu.setContentDescription("Open WinAVF controls");
+        menu.setOnClickListener(v -> {
+            boolean open = toolbar.getVisibility() != View.VISIBLE;
+            toolbar.setVisibility(open ? View.VISIBLE : View.GONE);
+            if (!open) {
+                settingsPanel.setVisibility(View.GONE);
+                logPanel.setVisibility(View.GONE);
+            }
+        });
+        FrameLayout.LayoutParams menuLayout = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.START);
+        menuLayout.setMargins(dp(10), dp(10), 0, 0);
+        page.addView(menu, menuLayout);
+
+        toolbar = new LinearLayout(this);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(dp(58), dp(6), dp(8), dp(6));
+        toolbar.setBackgroundColor(0xE6161A20);
+
+        TextView title = new TextView(this);
+        title.setText("WinAVF");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(18);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        Button launch = button("Запуск");
+        launch.setOnClickListener(v -> new Thread(this::startTest, "WinAVF-ui-start").start());
+        toolbar.addView(launch, new LinearLayout.LayoutParams(-2, dp(44)));
+        Button settings = button("Настройки");
+        settings.setOnClickListener(v -> toggleSettings());
+        toolbar.addView(settings, new LinearLayout.LayoutParams(-2, dp(44)));
+        Button logs = button("Логи");
+        logs.setOnClickListener(v -> toggleLogs());
+        toolbar.addView(logs, new LinearLayout.LayoutParams(-2, dp(44)));
+        FrameLayout.LayoutParams toolbarLayout = new FrameLayout.LayoutParams(-1, dp(60), Gravity.TOP);
+        page.addView(toolbar, toolbarLayout);
+
+        settingsPanel = new LinearLayout(this);
+        settingsPanel.setOrientation(LinearLayout.VERTICAL);
+        settingsPanel.setPadding(dp(18), dp(14), dp(18), dp(14));
+        settingsPanel.setBackgroundColor(0xF0181D24);
+        TextView settingsText = new TextView(this);
+        settingsText.setTextColor(Color.LTGRAY);
+        settingsText.setTextSize(14);
+        settingsText.setText("Профиль запуска\n\n"
+                + "• 1 vCPU · проверенная AVF-топология\n"
+                + "• EDK2 GOP → защищённый WAVF display\n"
+                + "• Windows media проверяется перед запуском\n"
+                + "• Изменения образа применяются только транзакционно\n\n"
+                + "Аппаратные параметры зафиксированы: случайное изменение CPU, ACPI, BCD или таймеров отключено.");
+        settingsPanel.addView(settingsText, new LinearLayout.LayoutParams(-1, -2));
+        settingsPanel.setVisibility(View.GONE);
+        FrameLayout.LayoutParams settingsLayout = new FrameLayout.LayoutParams(dp(330), -2, Gravity.TOP | Gravity.END);
+        settingsLayout.setMargins(0, dp(70), dp(10), 0);
+        page.addView(settingsPanel, settingsLayout);
+
+        logPanel = new ScrollView(this);
+        logPanel.setFillViewport(true);
+        logPanel.setBackgroundColor(0xF0101419);
+        logText = new TextView(this);
+        logText.setTextColor(0xFFD4D8DD);
+        logText.setTextSize(12);
+        logText.setTypeface(android.graphics.Typeface.MONOSPACE);
+        logText.setPadding(dp(14), dp(12), dp(14), dp(12));
+        logPanel.addView(logText, new ScrollView.LayoutParams(-1, -2));
+        logPanel.setVisibility(View.GONE);
+        FrameLayout.LayoutParams logsLayout = new FrameLayout.LayoutParams(-1, dp(300), Gravity.BOTTOM);
+        logsLayout.setMargins(dp(10), 0, dp(10), dp(10));
+        page.addView(logPanel, logsLayout);
+    }
+
+    private Button button(String text) {
+        Button result = new Button(this);
+        result.setText(text);
+        result.setTextSize(13);
+        result.setTextColor(Color.WHITE);
+        result.setAllCaps(false);
+        result.setBackgroundColor(0xFF242B35);
+        return result;
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private void toggleSettings() {
+        boolean show = settingsPanel.getVisibility() != View.VISIBLE;
+        settingsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) logPanel.setVisibility(View.GONE);
+    }
+
+    private void toggleLogs() {
+        boolean show = logPanel.getVisibility() != View.VISIBLE;
+        if (show) refreshLogPanel();
+        logPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) settingsPanel.setVisibility(View.GONE);
+    }
+
+    private void refreshLogPanel() {
+        String serial = readTail(new File(getExternalFilesDir(null), "serial.log"), 16 * 1024);
+        logText.setText("WINAVF EVENT LOG\n" + uiLog + (serial.isEmpty() ? "" : "\nRAW SERIAL TAIL\n" + serial));
+    }
+
+    private static String readTail(File file, int maxBytes) {
+        if (!file.isFile()) return "";
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            long offset = Math.max(0, input.length() - maxBytes);
+            input.seek(offset);
+            byte[] bytes = new byte[(int) (input.length() - offset)];
+            input.readFully(bytes);
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) { return ""; }
+    }
+
+    @Override public void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntentActions(intent);
+    }
+
+    /** Allows a deterministic external stop/rollback intent to reach an existing Activity. */
+    private void handleIntentActions(android.content.Intent intent) {
+        if (intent.getBooleanExtra("start", false)) {
             new Thread(this::startTest, "WinAVF-start").start();
         }
-        if (getIntent().getBooleanExtra("audit", false)) {
+        if (intent.getBooleanExtra("uefi_input_probe", false)) {
+            new Thread(this::startUefiInputProbe, "WinAVF-uefi-input").start();
+        }
+        if (intent.getBooleanExtra("vsock_hello_probe", false)) {
+            new Thread(this::startVsockHelloProbe, "WinAVF-vsock-hello").start();
+        }
+        if (intent.getBooleanExtra("rollback", false)) {
+            new Thread(this::rollbackLastPatch, "WinAVF-rollback").start();
+        }
+        if (intent.getBooleanExtra("audit", false)) {
             new Thread(this::auditVirtualizationCapabilities, "WinAVF-audit").start();
         }
-        if (getIntent().getBooleanExtra("display_host_audit", false)) {
+        if (intent.getBooleanExtra("synthetic_frame", false)) {
+            emitSyntheticFrameForSurfaceAudit();
+        }
+        if (intent.getBooleanExtra("display_host_audit", false)) {
             new Thread(this::auditNativeAvfDisplayAccess, "WinAVF-display-audit").start();
         }
+        if (intent.getBooleanExtra("console_input_api_probe", false)) {
+            new Thread(this::probeConsoleInputApi, "WinAVF-console-input-api").start();
+        }
+        if (intent.getBooleanExtra("console_binary_loopback", false)) {
+            new Thread(this::probeConsoleBinaryLoopback, "WinAVF-console-binary-loopback").start();
+        }
+        if (intent.getBooleanExtra("cleanup_console_binary_loopback", false)) {
+            new Thread(this::cleanupConsoleBinaryLoopback, "WinAVF-console-binary-cleanup").start();
+        }
+        if (intent.getBooleanExtra("kd_bridge", false)) {
+            final String token = intent.getStringExtra("kd_token");
+            new Thread(() -> startProductKdBridge(token), "WinAVF-product-kd-bridge").start();
+        }
+        if (intent.getBooleanExtra("kd_bridge_stop", false)) {
+            new Thread(this::stopProductKdBridge, "WinAVF-product-kd-stop").start();
+        }
+        if (intent.getBooleanExtra("export_product_bcd", false)) {
+            new Thread(this::exportProductBcdReadOnly, "WinAVF-product-bcd-audit").start();
+        }
+        if (intent.getBooleanExtra("persistent_witness_audit", false)) {
+            new Thread(this::auditPersistentBootWitness, "WinAVF-persistent-witness-audit").start();
+        }
+        if (intent.getBooleanExtra("persistent_witness_cleanup", false)) {
+            new Thread(this::cleanupPersistentBootWitness, "WinAVF-persistent-witness-cleanup").start();
+        }
+    }
+
+    /** UI-only decoder/surface audit; it does not create a VM or touch media. */
+    private void emitSyntheticFrameForSurfaceAudit() {
+        final int width = 320, height = 200, payloadBytes = width * height * 4;
+        byte[] record = new byte[28 + payloadBytes];
+        record[0] = 'W'; record[1] = 'A'; record[2] = 'V'; record[3] = 'F';
+        record[4] = 1; record[5] = 1;
+        putLe16(record, 8, width); putLe16(record, 10, height);
+        putLe32(record, 12, 0x53594631); putLe32(record, 16, payloadBytes);
+        for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+            int p = 28 + (y * width + x) * 4;
+            record[p] = (byte) (x * 255 / (width - 1));
+            record[p + 1] = (byte) (y * 255 / (height - 1));
+            record[p + 2] = (byte) 0x80; record[p + 3] = (byte) 0xff;
+        }
+        CRC32 crc = new CRC32(); crc.update(record, 28, payloadBytes);
+        putLe32(record, 20, (int) crc.getValue());
+        frameDecoder.feed(record, 0, record.length);
+        show("Synthetic WAVF surface audit frame submitted.");
+    }
+    private static void putLe16(byte[] target, int offset, int value) {
+        target[offset] = (byte) value; target[offset + 1] = (byte) (value >>> 8);
+    }
+    private static void putLe32(byte[] target, int offset, int value) {
+        target[offset] = (byte) value; target[offset + 1] = (byte) (value >>> 8);
+        target[offset + 2] = (byte) (value >>> 16); target[offset + 3] = (byte) (value >>> 24);
     }
 
     /** Records only display/input-related members present in this device's runtime. */
@@ -166,7 +433,242 @@ public final class MainActivity extends Activity {
         show("Native AVF display access audit saved to " + report.getAbsolutePath());
     }
 
+    /**
+     * Proves only that the app can obtain the AVF console-input stream.  It
+     * creates an app-owned custom VM with the existing kernel wrapper but no
+     * disk, does not call run(), writes no guest bytes, and deletes the VM in
+     * the finally block.  It cannot touch the product Windows medium.
+     */
+    private void probeConsoleInputApi() {
+        File report = new File(getExternalFilesDir(null), "console-input-api-probe.txt");
+        Object manager = null;
+        boolean created = false;
+        try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+            out.println("scope=NO_GUEST_RUN_NO_DISK_NO_PRODUCT_MEDIA");
+            Class<?> vmConfig = Class.forName("android.system.virtualmachine.VirtualMachineConfig");
+            Class<?> builder = Class.forName(vmConfig.getName() + "$Builder");
+            Object config = builder.getConstructor(android.content.Context.class).newInstance(this);
+            call(config, "setProtectedVm", boolean.class, false);
+            call(config, "setDebugLevel", int.class, 1);
+            call(config, "setConsoleInputDevice", String.class, "ttyS0");
+            call(config, "setVmConsoleInputSupported", boolean.class, true);
+            File payload = new File(getFilesDir(), "payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create payload directory");
+            File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
+            Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
+            Class<?> customBuilder = Class.forName(custom.getName() + "$Builder");
+            Object image = customBuilder.getConstructor().newInstance();
+            call(image, "setName", String.class, CONSOLE_INPUT_PROBE_VM_NAME);
+            call(image, "setOsName", String.class, "winavf-console-input-probe");
+            call(image, "setKernelPath", String.class, kernel.getAbsolutePath());
+            Object customConfig = call(image, "build");
+            call(config, "setCustomImageConfig", custom, customConfig);
+            Object finalConfig = call(config, "build");
+            boolean enabled = (Boolean) finalConfig.getClass().getMethod("isVmConsoleInputSupported").invoke(finalConfig);
+            out.println("config.isVmConsoleInputSupported=" + enabled);
+            if (!enabled) throw new IllegalStateException("Console-input flag was not persisted in config");
+
+            Class<?> managerClass = Class.forName("android.system.virtualmachine.VirtualMachineManager");
+            manager = getSystemService((Class) managerClass);
+            Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, CONSOLE_INPUT_PROBE_VM_NAME);
+            if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, CONSOLE_INPUT_PROBE_VM_NAME);
+            Object vm = manager.getClass().getMethod("create", String.class, finalConfig.getClass())
+                    .invoke(manager, CONSOLE_INPUT_PROBE_VM_NAME, finalConfig);
+            created = true;
+            OutputStream input = (OutputStream) vm.getClass().getMethod("getConsoleInput").invoke(vm);
+            // This is intentionally a zero-byte operation: it tests the Java
+            // stream object only and cannot inject a command into any guest.
+            input.write(new byte[0]);
+            input.flush();
+            input.close();
+            out.println("getConsoleInput=OUTPUT_STREAM_USABLE");
+            out.println("result=PASS");
+            show("Console input API probe: OutputStream acquired.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, true))) {
+                out.println("result=FAIL");
+                out.println("error=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("Console input API probe failed: " + rootMessage(error));
+        } finally {
+            if (created && manager != null) {
+                try { manager.getClass().getMethod("delete", String.class).invoke(manager, CONSOLE_INPUT_PROBE_VM_NAME); }
+                catch (Throwable ignored) { }
+            }
+        }
+    }
+
+    /**
+     * One isolated end-to-end binary test for app-owned console RX.  The guest
+     * is a 16550 echo loop with no disk and no Windows assets.  A marker gates
+     * transmission; the returned bytes are compared byte-for-byte and saved.
+     */
+    private void probeConsoleBinaryLoopback() {
+        File report = new File(getExternalFilesDir(null), "console-binary-loopback-report.txt");
+        File rawLog = new File(getExternalFilesDir(null), "console-binary-loopback.raw");
+        Object manager = null;
+        Object vm = null;
+        InputStream console = null;
+        OutputStream input = null;
+        final Object lock = new Object();
+        final ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+            out.println("scope=DISPOSABLE_NO_DISK_NO_WINDOWS_NO_PRODUCT_MEDIA");
+            byte[] expected = new byte[CONSOLE_BINARY_ECHO_BYTES];
+            for (int i = 0; i < expected.length; ++i) expected[i] = (byte) i;
+            out.println("patternBytes=" + expected.length);
+            out.println("patternSha256=" + hex(sha256(expected)));
+
+            File payload = new File(getFilesDir(), "payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create payload directory");
+            File kernel = copyAsset("console-binary-echo.Image", new File(payload, "console-binary-echo.Image"), -1L);
+            Object config = buildConsoleBinaryEchoConfig(kernel);
+            if (!(Boolean) config.getClass().getMethod("isVmConsoleInputSupported").invoke(config)) {
+                throw new IllegalStateException("Console input was not persisted in loopback config");
+            }
+            Class<?> managerClass = Class.forName("android.system.virtualmachine.VirtualMachineManager");
+            manager = getSystemService((Class) managerClass);
+            Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME);
+            if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME);
+            vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME, config);
+            console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
+            input = (OutputStream) vm.getClass().getMethod("getConsoleInput").invoke(vm);
+            final InputStream readerConsole = console;
+            Thread reader = new Thread(() -> {
+                byte[] buf = new byte[512];
+                try {
+                    for (int n; (n = readerConsole.read(buf)) >= 0;) {
+                        synchronized (lock) { captured.write(buf, 0, n); lock.notifyAll(); }
+                    }
+                } catch (Throwable ignored) { }
+            }, "WinAVF-console-binary-reader");
+            reader.setDaemon(true);
+            reader.start();
+            vm.getClass().getMethod("run").invoke(vm);
+
+            int markerOffset = waitForBytes(captured, lock, CONSOLE_BINARY_ECHO_READY, 8000);
+            if (markerOffset < 0) throw new IllegalStateException("Guest readiness marker not observed");
+            out.println("readyMarkerOffset=" + markerOffset);
+            input.write(expected);
+            input.flush();
+            out.println("patternTransmitted=true");
+            if (!waitForLength(captured, lock, markerOffset + CONSOLE_BINARY_ECHO_READY.length + expected.length, 8000)) {
+                throw new IllegalStateException("Timed out waiting for echoed pattern");
+            }
+            byte[] all;
+            synchronized (lock) { all = captured.toByteArray(); }
+            byte[] echoed = Arrays.copyOfRange(all, markerOffset + CONSOLE_BINARY_ECHO_READY.length,
+                    markerOffset + CONSOLE_BINARY_ECHO_READY.length + expected.length);
+            try (FileOutputStream raw = new FileOutputStream(rawLog, false)) { raw.write(all); }
+            out.println("echoedBytes=" + echoed.length);
+            out.println("echoedSha256=" + hex(sha256(echoed)));
+            out.println("byteExact=" + Arrays.equals(expected, echoed));
+            if (!Arrays.equals(expected, echoed)) throw new IllegalStateException("Echoed bytes differ from transmitted pattern");
+            out.println("result=PASS");
+            show("Console binary loopback PASS: 4096/4096 exact.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, true))) {
+                out.println("result=FAIL");
+                out.println("error=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("Console binary loopback failed: " + rootMessage(error));
+        } finally {
+            try { if (input != null) input.close(); } catch (Throwable ignored) { }
+            try { if (console != null) console.close(); } catch (Throwable ignored) { }
+            if (vm != null) {
+                try { vm.getClass().getMethod("stop").invoke(vm); } catch (Throwable ignored) { }
+            }
+            if (manager != null) {
+                try { manager.getClass().getMethod("delete", String.class).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME); }
+                catch (Throwable ignored) { }
+            }
+        }
+    }
+
+    /** Cleans only the named no-disk loopback VM left by an interrupted probe. */
+    private void cleanupConsoleBinaryLoopback() {
+        try {
+            Class<?> managerClass = Class.forName("android.system.virtualmachine.VirtualMachineManager");
+            Object manager = getSystemService((Class) managerClass);
+            Object vm = manager.getClass().getMethod("get", String.class).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME);
+            if (vm != null) {
+                try { vm.getClass().getMethod("stop").invoke(vm); } catch (Throwable ignored) { }
+            }
+            manager.getClass().getMethod("delete", String.class).invoke(manager, CONSOLE_BINARY_ECHO_VM_NAME);
+            show("Console binary loopback VM removed.");
+        } catch (Throwable error) {
+            show("Console binary loopback cleanup failed: " + rootMessage(error));
+        }
+    }
+
+    private Object buildConsoleBinaryEchoConfig(File kernel) throws Exception {
+        Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
+        Class<?> customBuilder = Class.forName(custom.getName() + "$Builder");
+        Object image = customBuilder.getConstructor().newInstance();
+        call(image, "setName", String.class, CONSOLE_BINARY_ECHO_VM_NAME);
+        call(image, "setOsName", String.class, "winavf-console-binary-echo");
+        call(image, "setKernelPath", String.class, kernel.getAbsolutePath());
+        Object customConfig = call(image, "build");
+        Class<?> vmConfig = Class.forName("android.system.virtualmachine.VirtualMachineConfig");
+        Class<?> builder = Class.forName(vmConfig.getName() + "$Builder");
+        Object config = builder.getConstructor(android.content.Context.class).newInstance(this);
+        call(config, "setProtectedVm", boolean.class, false);
+        call(config, "setDebugLevel", int.class, 1);
+        call(config, "setCpuTopology", int.class, vmConfig.getField("CPU_TOPOLOGY_ONE_CPU").getInt(null));
+        call(config, "setMemoryBytes", long.class, 512L * 1024L * 1024L);
+        call(config, "setConsoleInputDevice", String.class, "ttyS0");
+        call(config, "setVmOutputCaptured", boolean.class, true);
+        call(config, "setVmConsoleInputSupported", boolean.class, true);
+        call(config, "setCustomImageConfig", custom, customConfig);
+        return call(config, "build");
+    }
+
+    private static boolean waitForLength(ByteArrayOutputStream captured, Object lock, int required, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (lock) {
+            while (captured.size() < required) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return false;
+                lock.wait(remaining);
+            }
+            return true;
+        }
+    }
+
+    private static int waitForBytes(ByteArrayOutputStream captured, Object lock, byte[] needle, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (lock) {
+            for (;;) {
+                byte[] bytes = captured.toByteArray();
+                for (int i = 0; i <= bytes.length - needle.length; ++i) {
+                    boolean match = true;
+                    for (int j = 0; j < needle.length; ++j) if (bytes[i + j] != needle[j]) { match = false; break; }
+                    if (match) return i;
+                }
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return -1;
+                lock.wait(remaining);
+            }
+        }
+    }
+
+    private static String hex(byte[] bytes) { return java.util.HexFormat.of().formatHex(bytes).toUpperCase(java.util.Locale.ROOT); }
+
     private void startTest() {
+        startTest(false, false);
+    }
+
+    /** One opt-in host-to-virtio-keyboard probe; it never alters guest media. */
+    private void startUefiInputProbe() {
+        startTest(true, false);
+    }
+
+    /** One opt-in post-EBS raw-vsock HELLO probe; it never sends input events. */
+    private void startVsockHelloProbe() {
+        startTest(false, true);
+    }
+
+    private void startTest(boolean enableKeyboardProbe, boolean enableVsockHelloProbe) {
         try {
             show("Preparing app-private kernel-style loader…");
             File payload = new File(getFilesDir(), "payload");
@@ -187,10 +689,11 @@ public final class MainActivity extends Activity {
             if (!bootMedia.isFile() || bootMedia.length() != HEADLESS_BOOT_MEDIA_SIZE) {
                 throw new IllegalStateException("Missing compact headless boot medium: " + bootMedia);
             }
-            File esp = copyFile(bootMedia, new File(payload, HEADLESS_BOOT_MEDIA_NAME), HEADLESS_BOOT_MEDIA_SIZE, true);
+            File esp = copyFile(bootMedia, new File(payload, HEADLESS_BOOT_MEDIA_NAME), HEADLESS_BOOT_MEDIA_SIZE, false);
+            applyStagedImagePatch(payload, esp);
             show("Using the preserved Windows Boot Manager milestone medium only…");
             show("Creating custom AVF VM through Android API…");
-            Object config = buildConfig(kernel, esp);
+            Object config = buildConfig(kernel, esp, enableKeyboardProbe);
             Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
             try {
                 Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, VM_NAME);
@@ -202,11 +705,462 @@ public final class MainActivity extends Activity {
             InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
             startConsoleReader(console);
             vm.getClass().getMethod("run").invoke(vm);
+            if (enableKeyboardProbe) startEscInputProbe(vm);
+            if (enableVsockHelloProbe) startVsockHelloProbe(vm);
             startWinpeMarkerReporter(esp);
             show("VM launched. Waiting for kernel-first serial output…");
         } catch (Throwable t) {
             show("FAILED: " + rootMessage(t));
         }
+    }
+
+    /**
+     * Runs the unchanged product VM topology while relaying the already-proven
+     * ttyS0 streams byte-for-byte to a localhost TCP peer.  The bridge itself
+     * does not create or alter a patch; the normal transactional launcher path
+     * is retained, including its baseline verification and rollback record.
+     */
+    private void startProductKdBridge(String token) {
+        File report = new File(getExternalFilesDir(null), "product-kd-bridge-report.txt");
+        if (token == null || !token.matches("[0-9A-Fa-f]{32,128}")) {
+            writeBridgeFailure(report, "invalid diagnostic capability token");
+            return;
+        }
+        try (ServerSocket listener = new ServerSocket(KD_BRIDGE_PORT, 1, InetAddress.getLoopbackAddress())) {
+            listener.setSoTimeout(45_000);
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("scope=APP_OWNED_PRODUCT_VM_RAW_KD_BRIDGE");
+                out.println("listener=127.0.0.1:" + KD_BRIDGE_PORT);
+                out.println("state=LISTENING");
+                out.flush();
+                show("KD bridge waiting for the host connection…");
+                Socket socket = listener.accept();
+                socket.setTcpNoDelay(true);
+                // The host creates its debugger endpoint after connecting
+                // through adb forwarding; allow that bounded setup time.
+                // No VM or patch exists until this token is accepted.
+                socket.setSoTimeout(45_000);
+                byte[] supplied = readExactly(socket.getInputStream(), token.length());
+                if (!token.equals(new String(supplied, java.nio.charset.StandardCharsets.US_ASCII))) {
+                    throw new SecurityException("KD bridge capability token mismatch");
+                }
+                socket.getOutputStream().write("WINAVF_KD_BRIDGE_OK\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                socket.getOutputStream().flush();
+                socket.setSoTimeout(0);
+                activeKdBridgeSocket = socket;
+                out.println("state=HOST_AUTHENTICATED");
+                out.flush();
+
+                File payload = new File(getFilesDir(), "payload");
+                if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create payload directory");
+                File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
+                File bootMedia = new File(getExternalFilesDir(null), HEADLESS_BOOT_MEDIA_NAME);
+                if (!bootMedia.isFile() || bootMedia.length() != HEADLESS_BOOT_MEDIA_SIZE) {
+                    throw new IllegalStateException("Missing compact headless boot medium: " + bootMedia);
+                }
+                File esp = copyFile(bootMedia, new File(payload, HEADLESS_BOOT_MEDIA_NAME), HEADLESS_BOOT_MEDIA_SIZE, false);
+                applyStagedImagePatch(payload, esp);
+                Object config = buildConfig(kernel, esp, false);
+                Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+                try {
+                    Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, VM_NAME);
+                    if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, VM_NAME);
+                } catch (Exception ignored) { }
+                Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, VM_NAME, config);
+                activeKdBridgeVm = vm;
+                attachCallback(vm);
+                InputStream consoleOut = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
+                OutputStream consoleIn = (OutputStream) vm.getClass().getMethod("getConsoleInput").invoke(vm);
+                out.println("state=VM_CREATED");
+                out.flush();
+                startProductKdBridgePumps(consoleOut, consoleIn, socket);
+                vm.getClass().getMethod("run").invoke(vm);
+                out.println("state=VM_RUNNING");
+                out.flush();
+                show("Product KD bridge running on raw ttyS0.");
+                while (!socket.isClosed()) Thread.sleep(1000);
+            }
+        } catch (Throwable error) {
+            writeBridgeFailure(report, rootMessage(error));
+            show("Product KD bridge failed: " + rootMessage(error));
+        } finally {
+            activeKdBridgeSocket = null;
+            activeKdBridgeVm = null;
+        }
+    }
+
+    private static byte[] readExactly(InputStream input, int length) throws Exception {
+        byte[] result = new byte[length];
+        int offset = 0;
+        while (offset < length) {
+            int n = input.read(result, offset, length - offset);
+            if (n < 0) throw new java.io.EOFException("short bridge capability token");
+            offset += n;
+        }
+        return result;
+    }
+
+    private void startProductKdBridgePumps(InputStream consoleOut, OutputStream consoleIn, Socket socket) {
+        final File received = new File(getExternalFilesDir(null), "product-kd-bridge-rx.bin");
+        final File sent = new File(getExternalFilesDir(null), "product-kd-bridge-tx.bin");
+        new Thread(() -> {
+            try (FileOutputStream raw = new FileOutputStream(received, false);
+                 OutputStream peer = socket.getOutputStream()) {
+                byte[] buffer = new byte[4096];
+                for (int n; (n = consoleOut.read(buffer)) >= 0;) {
+                    raw.write(buffer, 0, n); raw.flush();
+                    peer.write(buffer, 0, n); peer.flush();
+                    frameDecoder.feed(buffer, 0, n);
+                }
+            } catch (Throwable ignored) { closeQuietly(socket); }
+        }, "WinAVF-product-kd-rx").start();
+        new Thread(() -> {
+            try (FileOutputStream raw = new FileOutputStream(sent, false);
+                 InputStream peer = socket.getInputStream()) {
+                byte[] buffer = new byte[4096];
+                for (int n; (n = peer.read(buffer)) >= 0;) {
+                    raw.write(buffer, 0, n); raw.flush();
+                    consoleIn.write(buffer, 0, n); consoleIn.flush();
+                }
+            } catch (Throwable ignored) { closeQuietly(socket); }
+        }, "WinAVF-product-kd-tx").start();
+    }
+
+    private void stopProductKdBridge() {
+        try {
+            Object vm = activeKdBridgeVm;
+            if (vm == null) {
+                Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+                vm = manager.getClass().getMethod("get", String.class).invoke(manager, VM_NAME);
+            }
+            if (vm != null) vm.getClass().getMethod("stop").invoke(vm);
+        } catch (Throwable ignored) { }
+        closeQuietly(activeKdBridgeSocket);
+        show("Product KD bridge stop requested.");
+    }
+
+    private static void closeQuietly(Socket socket) {
+        if (socket == null) return;
+        try { socket.close(); } catch (Throwable ignored) { }
+    }
+
+    private static void writeBridgeFailure(File report, String error) {
+        try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+            out.println("scope=APP_OWNED_PRODUCT_VM_RAW_KD_BRIDGE");
+            out.println("state=FAILED");
+            out.println("error=" + error);
+        } catch (Throwable ignored) { }
+    }
+
+    /** Reads and exports only the current ESP BCD; it never opens the image writable. */
+    private void exportProductBcdReadOnly() {
+        File report = new File(getExternalFilesDir(null), "product-bcd-readonly-report.txt");
+        File output = new File(getExternalFilesDir(null), "product-bcd-readonly.bin");
+        try {
+            File image = new File(getExternalFilesDir(null), HEADLESS_BOOT_MEDIA_NAME);
+            byte[] bcd = readFat32File(image, "EFI", "MICROSOFT", "BOOT", "BCD");
+            try (FileOutputStream stream = new FileOutputStream(output, false)) { stream.write(bcd); stream.getFD().sync(); }
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("scope=READ_ONLY_PRODUCT_BASELINE_BCD_EXPORT");
+                out.println("imageBytes=" + image.length());
+                out.println("bcdBytes=" + bcd.length);
+                out.println("bcdSha256=" + hex(sha256(bcd)));
+                out.println("result=PASS");
+            }
+            show("Read-only product BCD export complete.");
+        } catch (Throwable error) {
+            writeBridgeFailure(report, rootMessage(error));
+            show("Read-only product BCD export failed: " + rootMessage(error));
+        }
+    }
+
+    private static byte[] readFat32File(File image, String... path) throws Exception {
+        final long partition = 1_048_576L;
+        try (RandomAccessFile raw = new RandomAccessFile(image, "r")) {
+            raw.seek(partition); byte[] bpb = new byte[512]; raw.readFully(bpb);
+            if (bpb[82] != 'F' || bpb[83] != 'A' || bpb[84] != 'T' || bpb[85] != '3' || bpb[86] != '2') throw new IllegalStateException("Expected FAT32 partition");
+            int bps = u16(bpb, 11), spc = bpb[13] & 255, reserved = u16(bpb, 14), fats = bpb[16] & 255;
+            long fatSectors = u32(bpb, 36), cluster = u32(bpb, 44), clusterBytes = (long) bps * spc;
+            long fat = partition + (long) reserved * bps;
+            long data = partition + (reserved + (long) fats * fatSectors) * bps;
+            for (int element = 0; element < path.length; ++element) {
+                FatEntry entry = findFatEntry(raw, fat, data, clusterBytes, cluster, path[element]);
+                if (entry == null) throw new IllegalStateException("FAT entry not found: " + path[element]);
+                if (element == path.length - 1) return readFatFile(raw, fat, data, clusterBytes, entry.cluster, entry.size);
+                if ((entry.attributes & 0x10) == 0) throw new IllegalStateException("Expected directory: " + path[element]);
+                cluster = entry.cluster;
+            }
+            throw new IllegalStateException("Empty FAT path");
+        }
+    }
+
+    private static final class FatEntry {
+        final long cluster, size; final int attributes;
+        FatEntry(long cluster, long size, int attributes) { this.cluster = cluster; this.size = size; this.attributes = attributes; }
+    }
+    private static FatEntry findFatEntry(RandomAccessFile raw, long fat, long data, long clusterBytes, long start, String wanted) throws Exception {
+        for (long cluster : walkFatChain(raw, fat, start)) {
+            byte[] directory = new byte[(int) clusterBytes]; raw.seek(data + (cluster - 2) * clusterBytes); raw.readFully(directory);
+            String[] longNameParts = new String[21];
+            for (int offset = 0; offset < directory.length; offset += 32) {
+                int first = directory[offset] & 255;
+                if (first == 0) return null;
+                if (first == 0xe5) { Arrays.fill(longNameParts, null); continue; }
+                if ((directory[offset + 11] & 255) == 0x0f) {
+                    int order = directory[offset] & 0x1f;
+                    if (order > 0 && order < longNameParts.length) longNameParts[order] = decodeFatLongNamePart(directory, offset);
+                    continue;
+                }
+                String base = new String(directory, offset, 8, java.nio.charset.StandardCharsets.US_ASCII).trim();
+                String ext = new String(directory, offset + 8, 3, java.nio.charset.StandardCharsets.US_ASCII).trim();
+                String shortName = ext.isEmpty() ? base : base + "." + ext;
+                StringBuilder lfn = new StringBuilder();
+                for (int i = 1; i < longNameParts.length; ++i) if (longNameParts[i] != null) lfn.append(longNameParts[i]);
+                String name = lfn.length() == 0 ? shortName : lfn.toString();
+                Arrays.fill(longNameParts, null);
+                if (wanted.equalsIgnoreCase(name) || wanted.equalsIgnoreCase(shortName)) {
+                    long firstCluster = ((long) u16(directory, offset + 20) << 16) | u16(directory, offset + 26);
+                    return new FatEntry(firstCluster, u32(directory, offset + 28), directory[offset + 11] & 255);
+                }
+            }
+        }
+        return null;
+    }
+    private static String decodeFatLongNamePart(byte[] entry, int offset) {
+        int[] positions = { 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
+        StringBuilder text = new StringBuilder();
+        for (int position : positions) {
+            int code = u16(entry, offset + position);
+            if (code == 0 || code == 0xffff) break;
+            text.append((char) code);
+        }
+        return text.toString();
+    }
+    private static long[] walkFatChain(RandomAccessFile raw, long fat, long start) throws Exception {
+        java.util.ArrayList<Long> result = new java.util.ArrayList<>();
+        java.util.HashSet<Long> seen = new java.util.HashSet<>(); long cluster = start;
+        while (cluster >= 2 && cluster < 0x0ffffff8L) {
+            if (!seen.add(cluster)) throw new IllegalStateException("FAT loop at " + cluster);
+            result.add(cluster); raw.seek(fat + cluster * 4); byte[] next = new byte[4]; raw.readFully(next); cluster = u32(next, 0) & 0x0fffffffL;
+        }
+        return result.stream().mapToLong(Long::longValue).toArray();
+    }
+    private static byte[] readFatFile(RandomAccessFile raw, long fat, long data, long clusterBytes, long start, long size) throws Exception {
+        if (size > Integer.MAX_VALUE) throw new IllegalStateException("Read-only export is bounded to 2 GiB");
+        byte[] result = new byte[(int) size]; int copied = 0;
+        for (long cluster : walkFatChain(raw, fat, start)) {
+            int take = (int) Math.min(clusterBytes, size - copied); if (take <= 0) break;
+            raw.seek(data + (cluster - 2) * clusterBytes); raw.readFully(result, copied, take); copied += take;
+        }
+        if (copied != size) throw new IllegalStateException("FAT chain shorter than file size");
+        return result;
+    }
+
+    /**
+     * Repeatedly opens only the public app-to-guest vsock endpoint and waits
+     * for the agent's 16-byte WVH1 reply. It transmits no keyboard packet.
+     */
+    private void startVsockHelloProbe(Object vm) {
+        new Thread(() -> {
+            File report = new File(getExternalFilesDir(null), "vsock-hello-probe-report.txt");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("transport=AVF_CONNECT_VSOCK");
+                out.println("port=4050");
+                Throwable last = null;
+                for (int attempt = 1; attempt <= 60; ++attempt) {
+                    try {
+                        Method connect = vm.getClass().getMethod("connectVsock", long.class);
+                        ParcelFileDescriptor pfd = (ParcelFileDescriptor) connect.invoke(vm, 4050L);
+                        try (FileInputStream input = new FileInputStream(pfd.getFileDescriptor())) {
+                            byte[] hello = new byte[16];
+                            int offset = 0;
+                            while (offset < hello.length) {
+                                int count = input.read(hello, offset, hello.length - offset);
+                                if (count < 0) throw new IllegalStateException("short WVH1 reply");
+                                offset += count;
+                            }
+                            if (hello[0] != 'W' || hello[1] != 'V' || hello[2] != 'H' || hello[3] != '1') {
+                                throw new IllegalStateException("unexpected vsock hello magic");
+                            }
+                            long statusCode = ((long) hello[8] & 0xff) | (((long) hello[9] & 0xff) << 8)
+                                    | (((long) hello[10] & 0xff) << 16) | (((long) hello[11] & 0xff) << 24);
+                            long capabilities = ((long) hello[12] & 0xff) | (((long) hello[13] & 0xff) << 8)
+                                    | (((long) hello[14] & 0xff) << 16) | (((long) hello[15] & 0xff) << 24);
+                            out.println("attempt=" + attempt);
+                            out.println("hello=WVH1");
+                            out.println("agentStatus=" + statusCode);
+                            out.println("capabilities=" + capabilities);
+                            out.println("result=VSOCK_HELLO_PASS");
+                            show("VSOCK HELLO received from WinPE agent.");
+                            return;
+                        } finally {
+                            pfd.close();
+                        }
+                    } catch (Throwable error) {
+                        last = error;
+                        Thread.sleep(1000);
+                    }
+                }
+                out.println("result=VSOCK_HELLO_NOT_OBSERVED");
+                out.println("lastError=" + (last == null ? "none" : rootMessage(last)));
+                show("VSOCK HELLO was not observed.");
+            } catch (Throwable error) {
+                show("VSOCK HELLO probe failed: " + rootMessage(error));
+            }
+        }, "WinAVF-vsock-hello-probe").start();
+    }
+
+    /**
+     * Uses the AVF virtio-keyboard endpoint, not the unavailable serial-input
+     * endpoint. Linux input-event code 1 is KEY_ESC. The report distinguishes
+     * missing API, failed device setup, and accepted press/release writes.
+     */
+    private void startEscInputProbe(Object vm) {
+        new Thread(() -> {
+            File report = new File(getExternalFilesDir(null), "uefi-input-probe-report.txt");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("transport=AVF_VIRTIO_KEYBOARD");
+                out.println("key=KEY_ESC(1)");
+                Thread.sleep(1200);
+                Method sendKey = vm.getClass().getMethod("sendKeyEvent", short.class, boolean.class);
+                boolean down = (Boolean) sendKey.invoke(vm, (short) 1, true);
+                Thread.sleep(40);
+                boolean up = (Boolean) sendKey.invoke(vm, (short) 1, false);
+                out.println("sendKeyEvent=RESOLVED");
+                out.println("pressAccepted=" + down);
+                out.println("releaseAccepted=" + up);
+                out.println("result=" + (down && up ? "HOST_INPUT_ACCEPTED" : "HOST_INPUT_REJECTED"));
+                show("UEFI keyboard probe: press=" + down + " release=" + up);
+            } catch (Throwable error) {
+                try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                    out.println("transport=AVF_VIRTIO_KEYBOARD");
+                    out.println("result=HOST_INPUT_ERROR");
+                    out.println("error=" + rootMessage(error));
+                } catch (Throwable ignored) { }
+                show("UEFI keyboard probe failed: " + rootMessage(error));
+            }
+        }, "WinAVF-esc-input-probe").start();
+    }
+
+    /** Applies only a self-verifying range bundle to the preserved private copy. */
+    private void applyStagedImagePatch(File payload, File image) throws Exception {
+        File staging = new File(getExternalFilesDir(null), IMAGE_PATCH_STAGING_NAME);
+        File active = new File(payload, IMAGE_PATCH_ACTIVE_NAME);
+        if (!staging.isFile()) return;
+        if (active.exists()) {
+            if (!patchTargetsBaseline(active, image)) {
+                throw new IllegalStateException("An earlier image patch is still active; rollback it before applying another patch");
+            }
+            if (!active.delete()) throw new IllegalStateException("Could not discard the unapplied image patch record");
+            show("Discarded a patch record that was never applied to the baseline image.");
+        }
+        copyFile(staging, active, -1L, true);
+        try {
+            applyPatch(active, image, false);
+            if (!staging.delete()) show("Patch applied; external staging copy could not be deleted.");
+            show("Applied verified small image patch: " + active.length() + " bytes");
+        } catch (Throwable error) {
+            show("Patch was not accepted; active bundle is retained for inspection/rollback.");
+            throw error;
+        }
+    }
+
+    private void rollbackLastPatch() {
+        File report = new File(getExternalFilesDir(null), "rollback-report.txt");
+        try {
+            File payload = new File(getFilesDir(), "payload");
+            File image = new File(payload, HEADLESS_BOOT_MEDIA_NAME);
+            File active = new File(payload, IMAGE_PATCH_ACTIVE_NAME);
+            if (!image.isFile()) throw new IllegalStateException("No app-private runtime image exists yet");
+            if (!active.isFile()) throw new IllegalStateException("No active image patch exists to roll back");
+            applyPatch(active, image, true);
+            if (!active.delete()) throw new IllegalStateException("Rollback passed but the active patch record could not be removed");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("RESULT=PASS");
+                out.println("BASELINE_SHA256=" + hex(sha256File(image)));
+            }
+            show("Small image patch rolled back and the runtime image was verified.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("RESULT=FAIL");
+                out.println("ERROR=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("ROLLBACK FAILED: " + rootMessage(error));
+        }
+    }
+
+    private static final class PatchRange {
+        final long offset, oldDataOffset, newDataOffset;
+        final int length;
+        final byte[] oldHash, newHash;
+        PatchRange(long offset, int length, byte[] oldHash, byte[] newHash, long oldDataOffset, long newDataOffset) {
+            this.offset = offset; this.length = length; this.oldHash = oldHash; this.newHash = newHash;
+            this.oldDataOffset = oldDataOffset; this.newDataOffset = newDataOffset;
+        }
+    }
+
+    private static int readLittleEndianInt(RandomAccessFile file) throws Exception {
+        int b0 = file.readUnsignedByte(), b1 = file.readUnsignedByte();
+        int b2 = file.readUnsignedByte(), b3 = file.readUnsignedByte();
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    }
+    private static long readLittleEndianLong(RandomAccessFile file) throws Exception {
+        return (readLittleEndianInt(file) & 0xffffffffL) | ((long) readLittleEndianInt(file) << 32);
+    }
+    private static boolean patchTargetsBaseline(File patch, File image) throws Exception {
+        try (RandomAccessFile bundle = new RandomAccessFile(patch, "r")) {
+            byte[] magic = new byte[IMAGE_PATCH_MAGIC.length]; bundle.readFully(magic);
+            if (!Arrays.equals(magic, IMAGE_PATCH_MAGIC) || readLittleEndianInt(bundle) != 1) return false;
+            if (readLittleEndianLong(bundle) != image.length()) return false;
+            byte[] expectedBaseHash = new byte[32]; bundle.readFully(expectedBaseHash);
+            return Arrays.equals(expectedBaseHash, sha256File(image));
+        }
+    }
+    private static void applyPatch(File patch, File image, boolean rollback) throws Exception {
+        try (RandomAccessFile bundle = new RandomAccessFile(patch, "r")) {
+            byte[] magic = new byte[IMAGE_PATCH_MAGIC.length]; bundle.readFully(magic);
+            if (!Arrays.equals(magic, IMAGE_PATCH_MAGIC)) throw new IllegalStateException("Unsupported image patch magic");
+            if (readLittleEndianInt(bundle) != 1) throw new IllegalStateException("Unsupported image patch version");
+            long expectedLength = readLittleEndianLong(bundle);
+            if (expectedLength != image.length()) throw new IllegalStateException("Patch targets a different runtime image size");
+            byte[] expectedBaseHash = new byte[32]; bundle.readFully(expectedBaseHash);
+            int rangeCount = readLittleEndianInt(bundle);
+            if (rangeCount < 1 || rangeCount > 4096) throw new IllegalStateException("Invalid image patch range count");
+            PatchRange[] ranges = new PatchRange[rangeCount];
+            for (int i = 0; i < rangeCount; ++i) {
+                long offset = readLittleEndianLong(bundle); int length = readLittleEndianInt(bundle);
+                if (offset < 0 || length < 1 || length > 64 * 1024 * 1024 || offset > expectedLength - length) throw new IllegalStateException("Invalid image patch range");
+                byte[] oldHash = new byte[32], newHash = new byte[32]; bundle.readFully(oldHash); bundle.readFully(newHash);
+                long oldDataOffset = bundle.getFilePointer(); bundle.seek(oldDataOffset + length);
+                long newDataOffset = bundle.getFilePointer(); bundle.seek(newDataOffset + length);
+                ranges[i] = new PatchRange(offset, length, oldHash, newHash, oldDataOffset, newDataOffset);
+            }
+            if (bundle.getFilePointer() != bundle.length()) throw new IllegalStateException("Trailing data in image patch");
+            if (!rollback && !Arrays.equals(expectedBaseHash, sha256File(image))) throw new IllegalStateException("Runtime image does not match the patch baseline");
+            try (RandomAccessFile target = new RandomAccessFile(image, "rw")) {
+                for (PatchRange range : ranges) {
+                    byte[] expected = rollback ? range.newHash : range.oldHash;
+                    byte[] replacementHash = rollback ? range.oldHash : range.newHash;
+                    byte[] source = new byte[range.length]; target.seek(range.offset); target.readFully(source);
+                    if (!Arrays.equals(expected, sha256(source))) throw new IllegalStateException("Patch range state hash mismatch at " + range.offset);
+                    long replacementOffset = rollback ? range.oldDataOffset : range.newDataOffset;
+                    byte[] replacement = new byte[range.length]; bundle.seek(replacementOffset); bundle.readFully(replacement);
+                    if (!Arrays.equals(replacementHash, sha256(replacement))) throw new IllegalStateException("Patch payload hash mismatch at " + range.offset);
+                    target.seek(range.offset); target.write(replacement); target.getFD().sync();
+                    target.seek(range.offset); target.readFully(source);
+                    if (!Arrays.equals(replacementHash, sha256(source))) throw new IllegalStateException("Patch read-back verification failed at " + range.offset);
+                }
+            }
+            if (rollback && !Arrays.equals(expectedBaseHash, sha256File(image))) throw new IllegalStateException("Rollback did not restore the baseline hash");
+        }
+    }
+    private static byte[] sha256(byte[] bytes) throws Exception { return MessageDigest.getInstance("SHA-256").digest(bytes); }
+    private static byte[] sha256File(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256"); byte[] buffer = new byte[1024 * 1024];
+        try (InputStream in = new BufferedInputStream(new java.io.FileInputStream(file))) {
+            for (int n; (n = in.read(buffer)) >= 0;) digest.update(buffer, 0, n);
+        }
+        return digest.digest();
     }
 
     /** Stops autoboot and lists discovered bootflows; this is a read-only transport probe. */
@@ -243,7 +1197,7 @@ public final class MainActivity extends Activity {
         }, "WinAVF-target-usage").start();
     }
 
-    private Object buildConfig(File kernel, File esp) throws Exception {
+    private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe) throws Exception {
         Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
         Class<?> customBuilder = Class.forName(custom.getName() + "$Builder");
         Object image = customBuilder.getConstructor().newInstance();
@@ -270,6 +1224,7 @@ public final class MainActivity extends Activity {
         call(display, "setRefreshRate", int.class, 60);
         Object displayConfig = call(display, "build");
         call(image, "setDisplayConfig", displayConfig.getClass(), displayConfig);
+        if (enableKeyboardProbe) call(image, "useKeyboard", boolean.class, true);
         Class<?> gpuBuilder = Class.forName(custom.getName() + "$GpuConfig$Builder");
         Object gpuConfig = call(gpuBuilder.getConstructor().newInstance(), "build");
         call(image, "setGpuConfig", gpuConfig.getClass(), gpuConfig);
@@ -281,7 +1236,7 @@ public final class MainActivity extends Activity {
         Object config = builder.getConstructor(android.content.Context.class).newInstance(this);
         call(config, "setProtectedVm", boolean.class, false);
         call(config, "setMemoryBytes", long.class, 4L * 1024 * 1024 * 1024);
-        call(config, "setCpuTopology", int.class, vmConfig.getField("CPU_TOPOLOGY_MATCH_HOST").getInt(null));
+        call(config, "setCpuTopology", int.class, vmConfig.getField("CPU_TOPOLOGY_ONE_CPU").getInt(null));
         call(config, "setDebugLevel", int.class, 1);
         call(config, "setConsoleInputDevice", String.class, "ttyS0");
         call(config, "setVmOutputCaptured", boolean.class, true);
@@ -308,6 +1263,7 @@ public final class MainActivity extends Activity {
                 for (int n; (n = console.read(buffer)) >= 0;) {
                     rawLog.write(buffer, 0, n);
                     rawLog.flush();
+                    frameDecoder.feed(buffer, 0, n);
                     String text = new String(buffer, 0, n, java.nio.charset.StandardCharsets.UTF_8);
                     // U-Boot emits many one-byte console writes.  Rendering each one on
                     // Android's UI thread starves the VM and truncates the useful EDK2 log.
@@ -380,6 +1336,126 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Offline reader for the standard Windows Setup witness.  It is invoked
+     * only after the VM-owning process was stopped, and opens the app-private
+     * disposable disk read-only.  It performs no guest-media writes.
+     */
+    private void auditPersistentBootWitness() {
+        File report = new File(getExternalFilesDir(null), "persistent-boot-witness-report.txt");
+        try {
+            File payload = new File(getFilesDir(), "payload");
+            File disk = new File(payload, HEADLESS_BOOT_MEDIA_NAME);
+            if (!disk.isFile() || disk.length() != HEADLESS_BOOT_MEDIA_SIZE) {
+                throw new IllegalStateException("No disposable persistent-witness disk is available");
+            }
+            byte[] setupact = readFatRootFile(disk, "SETUPACT", "LOG", 16 * 1024 * 1024);
+            byte[] setuperr = readFatRootFile(disk, "SETUPERR", "LOG", 16 * 1024 * 1024);
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("scope=POST_STOP_OFFLINE_DISPOSABLE_DISK_INSPECTION");
+                out.println("diskBytes=" + disk.length());
+                out.println("diskSha256=" + hex(sha256File(disk)));
+                boolean found = false;
+                if (setupact != null && setupact.length > 0) {
+                    File artifact = new File(getExternalFilesDir(null), "persistent-witness-setupact.log");
+                    try (FileOutputStream log = new FileOutputStream(artifact, false)) { log.write(setupact); }
+                    out.println("SETUPACT_LOG_BYTES=" + setupact.length);
+                    out.println("SETUPACT_LOG_SHA256=" + hex(java.security.MessageDigest.getInstance("SHA-256").digest(setupact)));
+                    found = true;
+                }
+                if (setuperr != null && setuperr.length > 0) {
+                    File artifact = new File(getExternalFilesDir(null), "persistent-witness-setuperr.log");
+                    try (FileOutputStream log = new FileOutputStream(artifact, false)) { log.write(setuperr); }
+                    out.println("SETUPERR_LOG_BYTES=" + setuperr.length);
+                    out.println("SETUPERR_LOG_SHA256=" + hex(java.security.MessageDigest.getInstance("SHA-256").digest(setuperr)));
+                    found = true;
+                }
+                out.println("PERSISTENT_WINDOWS_SETUP_WITNESS=" + (found ? "PASS" : "NOT_OBSERVED"));
+                out.println("WINDOWS_KERNEL_EXECUTION_AFTER_EBS=" + (found ? "PASS" : "NOT_OBSERVED"));
+                out.println("NEGATIVE_INTERPRETATION=NO_PERSISTENT_ARTIFACT_DOES_NOT_PROVE_NO_KERNEL_EXECUTION");
+            }
+            show("Persistent witness offline audit complete");
+        } catch (Throwable t) {
+            try { writeBridgeFailure(report, rootMessage(t)); } catch (Throwable ignored) { }
+            show("Persistent witness audit failed: " + rootMessage(t));
+        }
+    }
+
+    /** Deletes only the app-private disposable disk and its transaction record. */
+    private void cleanupPersistentBootWitness() {
+        File report = new File(getExternalFilesDir(null), "persistent-witness-cleanup-report.txt");
+        try {
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            Object vm = manager.getClass().getMethod("get", String.class).invoke(manager, VM_NAME);
+            // force-stop terminates execution but the framework can retain the
+            // stopped named VM record.  Delete only this known disposable name
+            // before opening/deleting its private disk; never touch another VM.
+            if (vm != null) {
+                manager.getClass().getMethod("delete", String.class).invoke(manager, VM_NAME);
+                Object remaining = manager.getClass().getMethod("get", String.class).invoke(manager, VM_NAME);
+                if (remaining != null) throw new IllegalStateException("Could not delete stopped diagnostic VM record");
+            }
+            File payload = new File(getFilesDir(), "payload");
+            File privateDisk = new File(payload, HEADLESS_BOOT_MEDIA_NAME);
+            File activePatch = new File(payload, IMAGE_PATCH_ACTIVE_NAME);
+            if (privateDisk.exists() && !privateDisk.delete()) throw new IllegalStateException("Could not delete disposable private disk");
+            if (activePatch.exists() && !activePatch.delete()) throw new IllegalStateException("Could not delete disposable active patch");
+            File stagedPatch = new File(getExternalFilesDir(null), IMAGE_PATCH_STAGING_NAME);
+            if (stagedPatch.exists() && !stagedPatch.delete()) throw new IllegalStateException("Could not delete external staged patch");
+            File immutable = new File(getExternalFilesDir(null), HEADLESS_BOOT_MEDIA_NAME);
+            if (!immutable.isFile() || immutable.length() != HEADLESS_BOOT_MEDIA_SIZE) throw new IllegalStateException("Immutable baseline is unavailable");
+            String baseline = hex(sha256File(immutable));
+            if (!HEADLESS_BOOT_MEDIA_SHA256.equals(baseline)) throw new IllegalStateException("Immutable baseline hash mismatch after cleanup");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("DISPOSABLE_PRIVATE_CLONE_DELETED=PASS");
+                out.println("IMMUTABLE_BASELINE_SHA256=" + baseline);
+                out.println("RESULT=PASS");
+            }
+            show("Disposable persistent-witness disk deleted; baseline verified");
+        } catch (Throwable t) {
+            try { writeBridgeFailure(report, rootMessage(t)); } catch (Throwable ignored) { }
+            show("Persistent witness cleanup failed: " + rootMessage(t));
+        }
+    }
+
+    /** Returns a complete root-level FAT32 file, bounded to a diagnostic size. */
+    private static byte[] readFatRootFile(File disk, String wantedName, String wantedExt, int maximumBytes) throws Exception {
+        final long partition = 1024L * 1024L;
+        try (RandomAccessFile raw = new RandomAccessFile(disk, "r")) {
+            byte[] bpb = new byte[512]; raw.seek(partition); raw.readFully(bpb);
+            int bps = u16(bpb, 11), spc = bpb[13] & 255, reserved = u16(bpb, 14), fats = bpb[16] & 255;
+            long fatSectors = u32(bpb, 36), root = u32(bpb, 44);
+            if (bps != 512 || spc == 0 || fats != 2 || root < 2) throw new IllegalStateException("Unexpected FAT32 geometry");
+            long fat = partition + (long) reserved * bps;
+            long data = partition + (long) (reserved + fats * fatSectors) * bps;
+            int clusterBytes = bps * spc;
+            long cluster = root;
+            for (int guard = 0; guard < 1024 && cluster >= 2 && cluster < 0x0ffffff8L; ++guard) {
+                byte[] directory = new byte[clusterBytes]; raw.seek(data + (cluster - 2) * clusterBytes); raw.readFully(directory);
+                for (int off = 0; off + 32 <= directory.length; off += 32) {
+                    if (directory[off] == 0) return null;
+                    if ((directory[off] & 255) == 0xe5 || (directory[off + 11] & 255) == 0x0f || (directory[off + 11] & 0x10) != 0) continue;
+                    String name = new String(directory, off, 8, java.nio.charset.StandardCharsets.US_ASCII).trim();
+                    String ext = new String(directory, off + 8, 3, java.nio.charset.StandardCharsets.US_ASCII).trim();
+                    if (!wantedName.equals(name) || !wantedExt.equals(ext)) continue;
+                    long first = ((long) u16(directory, off + 20) << 16) | u16(directory, off + 26);
+                    long size = u32(directory, off + 28);
+                    if (size <= 0 || size > maximumBytes) throw new IllegalStateException("Witness log has invalid or excessive size: " + size);
+                    byte[] output = new byte[(int) size]; int copied = 0;
+                    for (int chainGuard = 0; chainGuard < 4096 && first >= 2 && first < 0x0ffffff8L && copied < size; ++chainGuard) {
+                        int take = Math.min(clusterBytes, (int) size - copied);
+                        raw.seek(data + (first - 2) * clusterBytes); raw.readFully(output, copied, take); copied += take;
+                        byte[] next = new byte[4]; raw.seek(fat + first * 4); raw.readFully(next); first = u32(next, 0) & 0x0fffffffL;
+                    }
+                    if (copied != size) throw new IllegalStateException("Witness FAT chain ended before file size");
+                    return output;
+                }
+                byte[] next = new byte[4]; raw.seek(fat + cluster * 4); raw.readFully(next); cluster = u32(next, 0) & 0x0fffffffL;
+            }
+            return null;
+        }
+    }
+
     private File copyAsset(String asset, File destination, long expectedLength) throws Exception {
         if (destination.isFile() && (expectedLength < 0 || destination.length() == expectedLength)) return destination;
         try (InputStream in = getAssets().open(asset); FileOutputStream out = new FileOutputStream(destination)) {
@@ -434,7 +1510,18 @@ public final class MainActivity extends Activity {
     }
     private static Object call(Object target, String name) throws Exception { return target.getClass().getMethod(name).invoke(target); }
     private static Object newInstance(Class<?> type) throws Exception { return type.getConstructor().newInstance(); }
-    private void show(String message) { runOnUiThread(() -> status.append("\n" + message)); }
+    private void show(String message) {
+        runOnUiThread(() -> {
+            String stamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.ROOT)
+                    .format(new java.util.Date());
+            uiLog.append(stamp).append("  ").append(message).append('\n');
+            // Keep the on-screen history bounded even during a long serial run.
+            if (uiLog.length() > 24 * 1024) uiLog.delete(0, uiLog.length() - 24 * 1024);
+            status.setText(message);
+            if (!frameVisible) status.setVisibility(View.VISIBLE);
+            if (logPanel != null && logPanel.getVisibility() == View.VISIBLE) refreshLogPanel();
+        });
+    }
     private static String rootMessage(Throwable error) {
         while (error.getCause() != null) error = error.getCause();
         return error.getClass().getSimpleName() + ": " + error.getMessage();

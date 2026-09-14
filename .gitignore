@@ -7,3 +7,6 @@
 *.apk
 out/
 Build/
+build-logs/
+**/__pycache__/
+*.pyc
