@@ -2193,6 +2193,25 @@ transfer or launch a candidate until it and its offline audit return
 `RESULT=PASS`.  Details:
 `docs/LINUX_EFI_STUB_HANDOFF_PROBE_2026-09-11.md`.
 
+### Full AVF/GenieZone interface re-audit — 2026-09-14
+
+A fresh read-only pass after the August security update revisited the app API,
+shell `vm` CLI, AVF Binder, privileged Terminal APK, crosvm GDB, tracefs,
+`/dev/gzvm`, Samsung HyPer HAL and guest-facing host devices. The only changed
+whole artefact, `VmTerminalApp.apk`, has byte-identical `classes.dex`,
+resources and manifest compared with the retained pre-OTA copy. The framework
+jar remains byte-identical. No new public or app-usable guest-PC/vCPU/exit/IRQ
+or timer observer was exposed.
+
+```text
+POST_OTA_NEW_DEBUG_INTERFACE          = NOT_OBSERVED
+DIRECT_POST_EBS_WINDOWS_OBSERVABILITY = BLOCKED
+```
+
+This closes the "missed public interface" check for build `X736BXXS8BZH4`;
+it does not prohibit productive pre-EBS product work or a vendor-provided
+diagnostic path. Details: `docs/FULL_AVF_INTERFACE_REAUDIT_2026-09-14.md`.
+
 ### Direct Linux EFI-stub v2 runtime — 2026-09-11
 
 The corrected v2 raw image was produced only after a VHD detach/re-attach
