@@ -1,4 +1,53 @@
-# WinAVF state — 2026-09-14
+# WinAVF state — 2026-09-20
+
+## Ubuntu post-EBS Device-Tree control — 2026-09-20
+
+V11 is the first app-owned AVF/GenieZone runtime to prove the complete Linux
+kernel-to-PID-1 path using the normal FDT handoff selected during DXE:
+
+```text
+LINUX_KERNEL_POST_EBS          = PASS
+LINUX_FDT_DXE_HANDOFF          = PASS
+LINUX_PCI_VIRTIO_BLOCK         = PASS
+LINUX_SYSTEMD_PID1             = PASS
+LINUX_VIRTIO_GPU_BOUND         = PASS
+UBUNTU_CASPER_BOTTOM            = PASS
+UBUNTU_GNOME_DISPLAY_MANAGER    = PASS
+UBUNTU_GNOME_USER_SESSION       = PASS
+UBUNTU_GNOME_SCREEN_IN_APP      = NOT_AVAILABLE
+```
+
+V12 added an exact SHA-256 gate for the app-private backing-file copy and
+passed it. Casper completed; `gdm.service` and live Ubuntu user sessions
+started. Later SquashFS XZ errors occur while the desktop accesses more live
+packages, but they do not erase the kernel-to-GNOME milestone. No post-EBS
+frame relay exists yet, so the graphical session is proven on serial rather
+than claimed visible in the app. Full evidence:
+`docs/UBUNTU_GNOME_FDT_DXE_HANDOFF_V11_RUNTIME_2026-09-20.md`.
+
+## Ubuntu GNOME FDT fallback boundary — 2026-09-20
+
+The V10 standalone EFI launcher successfully mutated the EDK2-visible
+`FdtClient` CPU node (`UF0`), removed ACPI (`UA0`), and reached Ubuntu
+`start_kernel()` after `ER`, where Linux reported `Failed to find device node
+for boot cpu` and panicked during early memory-zone initialization. A source
+audit corrected the initial interpretation: KvmTool had selected ACPI during
+DXE, so `FdtClientDxe` never published its HOB FDT via `gFdtTableGuid`; late
+ACPI removal cannot activate that normal Device-Tree handoff.
+
+```text
+LINUX_KERNEL_POST_EBS              = PASS
+LINUX_FDT_FALLBACK_ENTERED          = PASS
+LINUX_FDT_BOOT_CPU_TOPOLOGY_VALID   = FAIL
+UBUNTU_GNOME_LIVE_USERSPACE         = NOT_REACHED
+```
+
+The ACPI route has the complementary limitation: it reaches Casper but lacks a
+usable PCI/virtio block path. Do not iterate ISO/EFI-launcher variants. The
+next exact experiment is a firmware-only DXE Device-Tree-handoff A/B; only if
+it fails is a lower-level U-Boot/crosvm FDT repair or a complete ACPI PCI-root
+description required. Evidence:
+`docs/UBUNTU_GNOME_FDT_FALLBACK_RUNTIME_2026-09-20.md`.
 
 ## Product UEFI serial-input boundary — 2026-09-14
 

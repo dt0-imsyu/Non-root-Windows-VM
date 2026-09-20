@@ -59,6 +59,19 @@ public final class MainActivity extends Activity {
     private static final String HEADLESS_BOOT_MEDIA_NAME = "win11-gop-ebs-r1.img";
     private static final long HEADLESS_BOOT_MEDIA_SIZE = 9_126_805_504L;
     private static final String HEADLESS_BOOT_MEDIA_SHA256 = "2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7";
+    // Separate disposable Linux profile.  It intentionally shares only the
+    // proven kernel-first AVF topology with Windows; it never patches or
+    // overwrites the immutable Windows medium.
+    private static final String UBUNTU_GNOME_VM_NAME = "winavf-ubuntu-gnome-24045";
+    private static final String UBUNTU_GNOME_MEDIA_NAME = "ubuntu-gnome-24.04.5-v10-fdtclient-cpu0.img";
+    private static final long UBUNTU_GNOME_MEDIA_SIZE = 9_126_805_504L;
+    private static final String UBUNTU_GNOME_MEDIA_SHA256 = "FB201BABDD0E309D5177D683387495D058ACF910BAAEF8733DCB944CA92E569A";
+    // This patch targets only the disposable Ubuntu raw clone above. It makes
+    // KvmTool select the normal DXE Device-Tree handoff; Windows media never
+    // reads, stages, or receives this bundle.
+    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_NAME = "ubuntu-gnome-v11-fdt-dxe-firmware.patch";
+    private static final long UBUNTU_GNOME_FIRMWARE_PATCH_SIZE = 4_194_436L;
+    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_SHA256 = "9C109F3EB95D1B6F27929D970152725E0F2328A25FC3C847D8ED1603D86EDC55";
     private static final String IMAGE_PATCH_STAGING_NAME = "winavf-image-patch.bin";
     private static final String IMAGE_PATCH_ACTIVE_NAME = "active-image-patch.bin";
     private static final byte[] IMAGE_PATCH_MAGIC = "WAVFPAT1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
@@ -265,6 +278,12 @@ public final class MainActivity extends Activity {
     private void handleIntentActions(android.content.Intent intent) {
         if (intent.getBooleanExtra("start", false)) {
             new Thread(this::startTest, "WinAVF-start").start();
+        }
+        if (intent.getBooleanExtra("ubuntu_gnome", false)) {
+            new Thread(this::startUbuntuGnome, "WinAVF-ubuntu-gnome").start();
+        }
+        if (intent.getBooleanExtra("ubuntu_gnome_cleanup", false)) {
+            new Thread(this::cleanupUbuntuGnome, "WinAVF-ubuntu-gnome-cleanup").start();
         }
         if (intent.getBooleanExtra("uefi_input_probe", false)) {
             new Thread(this::startUefiInputProbe, "WinAVF-uefi-input").start();
@@ -739,6 +758,99 @@ public final class MainActivity extends Activity {
             show("VM launched. Waiting for kernel-first serial output…");
         } catch (Throwable t) {
             show("FAILED: " + rootMessage(t));
+        }
+    }
+
+    /**
+     * Starts a wholly separate Ubuntu Desktop live-media profile.  The Linux
+     * image is disposable and has its own app-private disk/VM name, so this
+     * cannot modify the Windows milestone medium or its rollback state.
+     */
+    private void startUbuntuGnome() {
+        try {
+            frameVisible = false;
+            observedFrameCount = 0;
+            File payload = new File(getFilesDir(), "ubuntu-gnome-payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create Ubuntu payload directory");
+            File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
+            File staged = new File(getExternalFilesDir(null), UBUNTU_GNOME_MEDIA_NAME);
+            if (!staged.isFile() || staged.length() != UBUNTU_GNOME_MEDIA_SIZE) {
+                throw new IllegalStateException("Missing Ubuntu GNOME staging medium: " + staged);
+            }
+            if (!UBUNTU_GNOME_MEDIA_SHA256.equals(hex(sha256File(staged)))) {
+                throw new SecurityException("Ubuntu GNOME staging hash mismatch");
+            }
+            File disk = copyFile(staged, new File(payload, UBUNTU_GNOME_MEDIA_NAME), UBUNTU_GNOME_MEDIA_SIZE, false);
+            // The Android-private copy is the actual crosvm backing file.  A
+            // matching staging hash and file length alone do not prove that a
+            // long copy reached this file byte-for-byte.  Gate the disposable
+            // Linux launch on its own full hash before applying the local FD
+            // patch, so a live-root read failure cannot be misclassified as a
+            // Linux, FDT, or virtio regression.
+            if (!UBUNTU_GNOME_MEDIA_SHA256.equals(hex(sha256File(disk)))) {
+                throw new SecurityException("Ubuntu GNOME private-media hash mismatch");
+            }
+            File stagedFirmwarePatch = new File(getExternalFilesDir(null), UBUNTU_GNOME_FIRMWARE_PATCH_NAME);
+            if (!stagedFirmwarePatch.isFile() || stagedFirmwarePatch.length() != UBUNTU_GNOME_FIRMWARE_PATCH_SIZE) {
+                throw new IllegalStateException("Missing Ubuntu-only FDT firmware patch: " + stagedFirmwarePatch);
+            }
+            if (!UBUNTU_GNOME_FIRMWARE_PATCH_SHA256.equals(hex(sha256File(stagedFirmwarePatch)))) {
+                throw new SecurityException("Ubuntu-only FDT firmware patch hash mismatch");
+            }
+            File privateFirmwarePatch = copyFile(
+                    stagedFirmwarePatch,
+                    new File(payload, UBUNTU_GNOME_FIRMWARE_PATCH_NAME),
+                    UBUNTU_GNOME_FIRMWARE_PATCH_SIZE,
+                    false);
+            applyPatch(privateFirmwarePatch, disk, false);
+            Object config = buildConfig(kernel, disk, false, UBUNTU_GNOME_VM_NAME);
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            try {
+                Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
+                if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
+            } catch (Exception ignored) { }
+            Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, UBUNTU_GNOME_VM_NAME, config);
+            attachCallback(vm);
+            InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
+            startConsoleReader(console, "ubuntu-gnome-serial.log");
+            vm.getClass().getMethod("run").invoke(vm);
+            show("Ubuntu GNOME live profile launched; capturing its complete serial log.");
+        } catch (Throwable t) {
+            show("Ubuntu GNOME launch failed: " + rootMessage(t));
+        }
+    }
+
+    /** Deletes only the stopped, disposable Ubuntu GNOME VM and its private disk. */
+    private void cleanupUbuntuGnome() {
+        File report = new File(getExternalFilesDir(null), "ubuntu-gnome-cleanup-report.txt");
+        try {
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            try {
+                Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
+                if (prior != null) {
+                    try { prior.getClass().getMethod("stop").invoke(prior); } catch (Throwable ignored) { }
+                    manager.getClass().getMethod("delete", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
+                }
+            } catch (Exception ignored) { }
+            File payload = new File(getFilesDir(), "ubuntu-gnome-payload");
+            File disk = new File(payload, UBUNTU_GNOME_MEDIA_NAME);
+            if (disk.exists() && !disk.delete()) throw new IllegalStateException("Could not delete disposable Ubuntu disk");
+            File loader = new File(payload, "u-boot-wrapper-v24.Image");
+            if (loader.exists() && !loader.delete()) throw new IllegalStateException("Could not delete disposable Ubuntu loader copy");
+            File firmwarePatch = new File(payload, UBUNTU_GNOME_FIRMWARE_PATCH_NAME);
+            if (firmwarePatch.exists() && !firmwarePatch.delete()) throw new IllegalStateException("Could not delete disposable Ubuntu firmware patch");
+            if (payload.exists() && !payload.delete()) throw new IllegalStateException("Could not delete empty Ubuntu payload directory");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("RESULT=PASS");
+                out.println("SCOPE=ubuntu-gnome-payload-only");
+                out.println("WINDOWS_PAYLOAD_UNTOUCHED=true");
+            }
+            show("Disposed the separate Ubuntu GNOME profile; Windows media was untouched.");
+        } catch (Throwable t) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("RESULT=FAIL"); out.println("ERROR=" + rootMessage(t));
+            } catch (Throwable ignored) { }
+            show("Ubuntu GNOME cleanup failed: " + rootMessage(t));
         }
     }
 
@@ -1277,10 +1389,14 @@ public final class MainActivity extends Activity {
     }
 
     private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe) throws Exception {
+        return buildConfig(kernel, esp, enableKeyboardProbe, VM_NAME);
+    }
+
+    private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe, String vmName) throws Exception {
         Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
         Class<?> customBuilder = Class.forName(custom.getName() + "$Builder");
         Object image = customBuilder.getConstructor().newInstance();
-        call(image, "setName", String.class, VM_NAME);
+        call(image, "setName", String.class, vmName);
         call(image, "setOsName", String.class, "winavf");
         call(image, "setKernelPath", String.class, kernel.getAbsolutePath());
         call(image, "useNetwork", boolean.class, false);
@@ -1334,8 +1450,12 @@ public final class MainActivity extends Activity {
     }
 
     private void startConsoleReader(InputStream console) {
+        startConsoleReader(console, "serial.log");
+    }
+
+    private void startConsoleReader(InputStream console, String fileName) {
         new Thread(() -> {
-            File serialLog = new File(getExternalFilesDir(null), "serial.log");
+            File serialLog = new File(getExternalFilesDir(null), fileName);
             show("Writing complete VM serial log to " + serialLog.getAbsolutePath());
             try (FileOutputStream rawLog = new FileOutputStream(serialLog, false)) {
                 byte[] buffer = new byte[256];
