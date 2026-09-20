@@ -124,6 +124,23 @@ does not yet have a post-EBS framebuffer relay, so `GDM` is evidence of a
 graphical session on the guest, not a claim that GNOME pixels were shown in
 the Android `SurfaceView`.
 
+## CPU-ID stability observation
+
+The otherwise equivalent Linux launches observed two different architectural
+CPU implementations at kernel entry:
+
+```text
+V11: Booting Linux ... [0x410fd821]
+V12: Booting Linux ... [0x410fd851]
+```
+
+This is a factual cross-launch contract difference for app-owned AVF guests.
+It does **not** by itself prove vCPU migration during one VM lifetime or prove
+the Windows failure's root cause. It does, however, make a fixed, emulated CPU
+contract an important future diagnostic request: a next focused probe should
+sample MIDR and the dependent ID registers repeatedly inside one guest while
+the vCPU is under load. Do not mask individual Windows CPU features blindly.
+
 ## Evidence
 
 | Evidence | SHA-256 |

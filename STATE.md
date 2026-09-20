@@ -25,6 +25,12 @@ frame relay exists yet, so the graphical session is proven on serial rather
 than claimed visible in the app. Full evidence:
 `docs/UBUNTU_GNOME_FDT_DXE_HANDOFF_V11_RUNTIME_2026-09-20.md`.
 
+The two equivalent Linux launches also reported different `MIDR_EL1` values
+at kernel entry (`0x410FD821` and `0x410FD851`). This is cross-launch evidence
+of a non-fixed host-derived CPU profile, not yet proof of within-VM migration
+or a Windows root cause. It is retained as a high-value platform-contract
+lead, not an excuse for unprincipled CPU-feature masking.
+
 ## Ubuntu GNOME FDT fallback boundary — 2026-09-20
 
 The V10 standalone EFI launcher successfully mutated the EDK2-visible
