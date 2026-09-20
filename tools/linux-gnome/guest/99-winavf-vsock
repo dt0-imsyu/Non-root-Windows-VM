@@ -1,0 +1,5 @@
+#!/bin/sh
+# This runs from the initramfs and survives switch_root.  The tiny listener
+# retries until virtio_vsock has been registered, so it does not assume an
+# exact Ubuntu module-load ordering.
+/usr/local/sbin/winavf-vsock-hello </dev/console >/dev/console 2>&1 &

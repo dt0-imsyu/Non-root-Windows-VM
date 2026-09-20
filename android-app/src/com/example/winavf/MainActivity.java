@@ -814,6 +814,7 @@ public final class MainActivity extends Activity {
             InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
             startConsoleReader(console, "ubuntu-gnome-serial.log");
             vm.getClass().getMethod("run").invoke(vm);
+            startUbuntuVsockHelloProbe(vm);
             show("Ubuntu GNOME live profile launched; capturing its complete serial log.");
         } catch (Throwable t) {
             show("Ubuntu GNOME launch failed: " + rootMessage(t));
@@ -1148,6 +1149,65 @@ public final class MainActivity extends Activity {
                 show("VSOCK HELLO probe failed: " + rootMessage(error));
             }
         }, "WinAVF-vsock-hello-probe").start();
+    }
+
+    /**
+     * Linux-only post-EBS transport proof.  Its disposable initramfs carries
+     * a small static AF_VSOCK listener which returns LVH1 on port 4051.  This
+     * does not reuse the Windows probe, send input, or touch any Windows file.
+     */
+    private void startUbuntuVsockHelloProbe(Object vm) {
+        new Thread(() -> {
+            File report = new File(getExternalFilesDir(null), "ubuntu-gnome-vsock-report.txt");
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("transport=AVF_CONNECT_VSOCK");
+                out.println("guest=UBUNTU_INITRAMFS");
+                out.println("port=4051");
+                Throwable last = null;
+                for (int attempt = 1; attempt <= 90; ++attempt) {
+                    try {
+                        Method connect = vm.getClass().getMethod("connectVsock", long.class);
+                        ParcelFileDescriptor pfd = (ParcelFileDescriptor) connect.invoke(vm, 4051L);
+                        try (FileInputStream input = new FileInputStream(pfd.getFileDescriptor())) {
+                            byte[] hello = new byte[16];
+                            int offset = 0;
+                            while (offset < hello.length) {
+                                int count = input.read(hello, offset, hello.length - offset);
+                                if (count < 0) throw new IllegalStateException("short LVH1 reply");
+                                offset += count;
+                            }
+                            if (hello[0] != 'L' || hello[1] != 'V' || hello[2] != 'H' || hello[3] != '1') {
+                                throw new IllegalStateException("unexpected Linux vsock hello magic");
+                            }
+                            long revision = ((long) hello[4] & 0xff) | (((long) hello[5] & 0xff) << 8)
+                                    | (((long) hello[6] & 0xff) << 16) | (((long) hello[7] & 0xff) << 24);
+                            long statusCode = ((long) hello[8] & 0xff) | (((long) hello[9] & 0xff) << 8)
+                                    | (((long) hello[10] & 0xff) << 16) | (((long) hello[11] & 0xff) << 24);
+                            long capabilities = ((long) hello[12] & 0xff) | (((long) hello[13] & 0xff) << 8)
+                                    | (((long) hello[14] & 0xff) << 16) | (((long) hello[15] & 0xff) << 24);
+                            out.println("attempt=" + attempt);
+                            out.println("hello=LVH1");
+                            out.println("revision=" + revision);
+                            out.println("agentStatus=" + statusCode);
+                            out.println("capabilities=" + capabilities);
+                            out.println("result=LINUX_VSOCK_HELLO_PASS");
+                            show("Ubuntu vsock HELLO received; Linux post-EBS transport is live.");
+                            return;
+                        } finally {
+                            pfd.close();
+                        }
+                    } catch (Throwable error) {
+                        last = error;
+                        Thread.sleep(1000);
+                    }
+                }
+                out.println("result=LINUX_VSOCK_HELLO_NOT_OBSERVED");
+                out.println("lastError=" + (last == null ? "none" : rootMessage(last)));
+                show("Ubuntu vsock HELLO was not observed.");
+            } catch (Throwable error) {
+                show("Ubuntu vsock probe failed: " + rootMessage(error));
+            }
+        }, "WinAVF-ubuntu-vsock-hello").start();
     }
 
     /**
