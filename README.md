@@ -1,178 +1,67 @@
-# WinAVF — Windows on Android AVF research
+# U-AVF
 
-WinAVF is an experimental, non-root research project for booting Windows ARM64
-on a Samsung Galaxy Tab S11 through Android Virtualization Framework (AVF),
-Samsung/MediaTek GenieZone, a kernel-first U-Boot loader, and EDK2.
+![U-AVF icon](android-app/res/drawable/ic_uavf_brand.png)
 
-It is **not** a Windows installer or a daily-driver VM product yet. Its value
-today is a reproducible platform, a full evidence trail, and a working
-pre-boot graphical experience without root, bootloader unlock, or modification
-of Android system partitions.
+U-AVF is an experimental, non-root Android Virtualization Framework (AVF) launcher for ARM64 guests on a Samsung Galaxy Tab S11. It has separate **Windows** and **Linux** modes. The project uses GenieZone/crosvm, a kernel-first U-Boot stage, and EDK2. It does not unlock the bootloader or modify Android system partitions.
 
----
+This is a research build, **not** a ready-to-install Windows or Ubuntu VM. Large guest media and firmware artifacts are not distributed in Git. The APK alone cannot boot either guest without verified local media.
 
 ## English
 
-### What works
+### Current status
 
-- Android AVF launches the custom one-vCPU VM on the Galaxy Tab S11.
-- U-Boot and EDK2 boot correctly; Windows Boot Manager and `winload.efi` are
-  reached.
-- The original UEFI `ExitBootServices()` call returns successfully.
-- EDK2 GOP frames are encoded as WAVF, exported through AVF console output,
-  decoded in the Android app, and displayed in a `SurfaceView`.
-- Repeated real UEFI screen updates are visible in the app.
-- The app has a compact launch UI, a fixed-profile settings panel, and a local
-  log panel. Once the guest produces a frame, controls collapse to a menu so
-  the guest keeps the screen.
-- Synthetic post-EBS probes prove guest RAM, UART, EL1 exceptions, GIC virtual
-  timer PPI27, WFI wake-up, and reset on the product VM.
+| Mode | Confirmed | Still missing |
+| --- | --- | --- |
+| Windows | U-Boot → EDK2 → Windows Boot Manager → `winload.efi` → successful original `ExitBootServices()` return; graphical UEFI frames appear in the app | Windows kernel/WinPE user-mode progress after EBS and Windows desktop |
+| Linux | An untouched Ubuntu 24.04.5 Desktop ARM64 ISO boots through Linux `/init`, systemd, GDM, and GNOME Shell; virtio-GPU binds and creates a DRM framebuffer | GNOME desktop pixels in the app and user input; a capset timeout still needs investigation |
 
-### Current limitation
+Linux's `GNOME_USERSPACE = PASS` is evidenced by the final serial log, including `GNOME Shell started` and GDM session registration. **It is not a claim that the GNOME desktop is visible or interactive in U-AVF yet.** Read the [generic Ubuntu runtime report](docs/GENERIC_UBUNTU_GNOME_USERSPACE_2026-09-24.md).
 
-`WINDOWS_POST_EBS` and `WINPE_USERLAND` are **not confirmed**. Windows reaches
-the firmware handoff, but no supported observer has yet identified its first
-post-EBS kernel location on stock Samsung firmware.
+Windows reaches EBS, but `WINDOWS_POST_EBS` and `WINPE_USERLAND` remain unconfirmed. An independently reproduced EL1 physical timer issue is documented for Samsung; it has **not** been proven to cause the Windows stall.
 
-An independent firmware-only defect is reproducible: the advertised EL1
-physical timer (`CNTP` / PPI30) does not retain a guest `CNTP_CVAL_EL0`
-deadline after EBS, whereas the virtual timer (`CNTV` / PPI27) works. This is
-reported separately and is **not claimed as the proven direct cause** of the
-Windows stall. See the [Samsung submission kit](docs/SAMSUNG_GENIEZONE_SUBMISSION_KIT_2026-09-14.md).
+### Using the app
 
-### Repository layout
+1. Build and install the development APK with the established Android SDK/NDK environment:
 
-| Path | Purpose |
-|---|---|
-| `android-app/` | WinAVF launcher, AVF integration, WAVF decoder and full-screen renderer |
-| `firmware/` | EDK2 platform boot-manager modifications and GOP/WAVF producer |
-| `tools/` | Reproducible builders, image auditors, transactional patch/rollback helpers |
-| `docs/` | Runtime reports, architecture decisions, evidence and vendor repro package |
-| `STATE.md` | Current project state and confirmed boundaries |
-| `CHECKLIST.md` | Ordered test checklist and handoff notes |
+   ```powershell
+   cd C:\path\to\U-AVF\android-app
+   .\build.ps1
+   $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+   & $adb install -r .\out\WinAVF-test.apk
+   ```
 
-### Quick start: build and install the Android launcher
+2. Open **U-AVF**. In **Settings**, select **Windows mode** or **Linux mode**. The choice is remembered. **Launch** starts the selected VM, **Stop** requests it to stop, and **Logs** shows local event and serial output. The guest display occupies the main screen; the top controls can be collapsed.
+3. Stage only the audited media required by the chosen mode. The app checks exact file sizes and SHA-256 hashes before launch. Windows uses the immutable known-good image and reversible firmware patch. Linux uses the verified stock Ubuntu ISO plus a separate platform disk containing the boot chain; the ISO itself is never edited. See [STATE.md](STATE.md), the [operator guide](docs/APP_UI_AND_OPERATOR_GUIDE_2026-09-21.md), and the [generic Ubuntu report](docs/GENERIC_UBUNTU_GNOME_USERSPACE_2026-09-24.md) before attempting a run.
 
-Requirements: Windows host, Android SDK Platform Tools, Android SDK API 36,
-Android NDK as configured in `android-app/build.ps1`, a connected test tablet,
-and USB debugging authorised for `adb`.
+The build currently references a known-good U-Boot wrapper in the developer's local workspace, so a fresh clone does not build or run standalone. This limitation is intentional and should not be hidden by publishing unaudited guest images.
 
-```powershell
-cd C:\path\to\Non-root-Windows-VM\android-app
-.\build.ps1
+### Safety and repository layout
 
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb install -r .\out\WinAVF-test.apk
-```
+- Preserve the immutable Windows baseline SHA-256: `2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7`.
+- Use disposable candidates and verify their hashes and rollback. Never target a physical disk with image-editing scripts.
+- `android-app/`: launcher, AVF integration, pre-EBS WAVF decoder and renderer.
+- `firmware/`: EDK2 platform and GOP producer changes.
+- `tools/generic-ubuntu/`: platform-disk builder and offline auditors; no modified stock ISO.
+- `docs/`, `STATE.md`: evidence, procedures, limitations, and milestones.
+- [Local artifact policy](docs/LOCAL_ARTIFACT_POLICY_2026-09-14.md): images, firmware binaries, APK outputs, and raw runtime logs stay outside ordinary Git commits.
 
-Open **WinAVF** on the tablet. **Launch** uses the existing, fixed and audited
-product VM profile. It expects the known-good media to already be staged in
-the app's external-files directory; the launcher intentionally refuses an
-unknown-size image or an unverified transactional patch.
+The physical-timer report for Samsung is available in the [submission kit](docs/SAMSUNG_GENIEZONE_SUBMISSION_KIT_2026-09-14.txt).
 
-Do not treat a cloned repository as sufficient to run Windows: disk images,
-firmware volumes, APK outputs and raw logs are intentionally local-only. Their
-hashes and the exact materialisation procedures are recorded in `docs/` and
-`tools/`; see [the local-artifact policy](docs/LOCAL_ARTIFACT_POLICY_2026-09-14.md).
+## Русский
 
-### Safety rules
+### Что работает
 
-- Keep the immutable runtime baseline unchanged:
-  `2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7`.
-- Use only a disposable copy for candidate images and require rollback/hash
-  verification before and after each runtime test.
-- Never use scripts here against a physical host/tablet disk.
-- Do not change BCD, signed Windows binaries, Android system files, or
-  firmware merely to try a speculative workaround.
-- Read the corresponding report before repeating any numbered runtime test.
+| Режим | Подтверждено | Пока не готово |
+| --- | --- | --- |
+| Windows | U-Boot → EDK2 → Windows Boot Manager → `winload.efi` → успешный возврат из оригинального `ExitBootServices()`; графический UEFI виден в приложении | Подтверждение выполнения ядра/WinPE после EBS и рабочий стол Windows |
+| Linux | Неизменённый официальный Ubuntu 24.04.5 Desktop ARM64 ISO доходит до `/init`, systemd, GDM и GNOME Shell; virtio-GPU создаёт DRM framebuffer | Картинка GNOME в приложении и управление; требуется разобраться с capset timeout |
 
-### Reporting the platform defect
+`GNOME_USERSPACE = PASS` означает подтверждённый запуск GNOME Shell по serial-логу. Это **ещё не** означает, что рабочий стол виден на экране U-AVF или им можно управлять. Подробности — в [отчёте](docs/GENERIC_UBUNTU_GNOME_USERSPACE_2026-09-24.md). Windows доходит до EBS, но `WINDOWS_POST_EBS` и `WINPE_USERLAND` пока не подтверждены. Найденный отдельно дефект физического таймера не объявляется доказанной причиной остановки Windows.
 
-Submit the compact report in the Samsung submission kit through **Samsung
-Members → Support → Error reports**, enable **Send system log data**, then
-escalate the resulting report ID through Samsung Support. The kit contains a
-full engineering report, evidence hashes, and a privacy-safe attachment list.
+### Как пользоваться
 
----
+1. Соберите тестовый APK командой `android-app\build.ps1` в подготовленном Windows/Android SDK окружении и установите `android-app\out\WinAVF-test.apk` через ADB. Обычный клон репозитория **не содержит** больших образов и локального проверенного U-Boot wrapper, поэтому сам по себе не готов к запуску VM.
+2. Откройте **U-AVF**. В **Settings** выберите **Windows mode** или **Linux mode**. Выбор запоминается. **Launch** запускает выбранный режим, **Stop** запрашивает остановку VM, **Logs** показывает журнал. Экспериментальные диагностические профили не входят в обычный выбор режимов.
+3. До запуска разместите только проверенные файлы для выбранного режима. Приложение сверяет размер и SHA-256. Windows использует неизменяемый known-good образ и обратимый firmware patch; Linux — отдельный платформенный диск и официальный ISO без изменения его байтов. Точные ограничения и методы: [STATE.md](STATE.md), [руководство оператора](docs/APP_UI_AND_OPERATOR_GUIDE_2026-09-21.md), [отчёт Ubuntu](docs/GENERIC_UBUNTU_GNOME_USERSPACE_2026-09-24.md).
 
-## Русская версия
-
-### Что уже работает
-
-- Android AVF запускает пользовательскую VM с одним vCPU на Galaxy Tab S11.
-- U-Boot и EDK2 загружаются; достигнуты Windows Boot Manager и `winload.efi`.
-- Исходный вызов UEFI `ExitBootServices()` успешно возвращается вызывающему
-  загрузчику Windows.
-- Кадры EDK2 GOP кодируются в WAVF, выходят через AVF console, декодируются
-  Android-приложением и отображаются в `SurfaceView`.
-- В приложении видны реальные повторные изменения интерфейса UEFI.
-- В launcher есть компактный запуск, настройки фиксированного профиля и
-  вкладка логов. После первого кадра элементы скрываются в меню, чтобы экран
-  практически целиком занимал гость.
-- Synthetic post-EBS probes подтвердили RAM, UART, исключения EL1, виртуальный
-  таймер GIC PPI27, пробуждение из WFI и reset именно на product VM.
-
-### Текущее ограничение
-
-`WINDOWS_POST_EBS` и `WINPE_USERLAND` пока **не подтверждены**. Windows
-проходит firmware handoff, но на stock Samsung пока нет доступного observer,
-который честно укажет её первую kernel-точку после EBS.
-
-Отдельно найден firmware-only дефект: advertised physical timer EL1
-(`CNTP` / PPI30) не сохраняет deadline `CNTP_CVAL_EL0` после EBS, тогда как
-virtual timer (`CNTV` / PPI27) работает. Это **не объявлено доказанной
-причиной** зависания Windows. Готовый отчёт для Samsung находится в
-[submission kit](docs/SAMSUNG_GENIEZONE_SUBMISSION_KIT_2026-09-14.md).
-
-### Структура репозитория
-
-| Путь | Назначение |
-|---|---|
-| `android-app/` | Launcher WinAVF, AVF-интеграция, WAVF decoder и renderer |
-| `firmware/` | Изменения EDK2 boot manager и GOP/WAVF producer |
-| `tools/` | Сборщики, offline-аудиторы, transactional patch и rollback scripts |
-| `docs/` | Отчёты runtime, архитектурные решения, доказательства и vendor repro |
-| `STATE.md` | Текущее состояние и подтверждённые границы |
-| `CHECKLIST.md` | Последовательность тестов и handoff-заметки |
-
-### Быстрый старт: собрать и поставить launcher
-
-Нужны Windows-хост, Android SDK Platform Tools, Android SDK API 36, Android
-NDK из конфигурации `android-app/build.ps1`, подключённый планшет и разрешённый
-USB debugging.
-
-```powershell
-cd C:\path\to\Non-root-Windows-VM\android-app
-.\build.ps1
-
-$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
-& $adb install -r .\out\WinAVF-test.apk
-```
-
-Откройте **WinAVF** на планшете. Кнопка **Запуск** использует существующий
-проверенный VM-профиль. Known-good media должны быть заранее размещены во
-внешней папке приложения: launcher намеренно не принимает неизвестный образ
-или непроверенный transactional patch.
-
-Обычного `git clone` недостаточно для запуска Windows: образы дисков, firmware
-volumes, APK и raw logs специально оставлены локальными. Их SHA-256 и точные
-процедуры materialize/audit записаны в `docs/` и `tools/`; см.
-[политику локальных артефактов](docs/LOCAL_ARTIFACT_POLICY_2026-09-14.md).
-
-### Правила безопасности
-
-- Не менять immutable baseline:
-  `2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7`.
-- Любой candidate делать только из отдельной копии и подтверждать rollback и
-  hash до/после runtime.
-- Не применять скрипты к физическим дискам компьютера или планшета.
-- Не менять BCD, подписанные Windows binaries, Android system files или
-  firmware ради неподтверждённой гипотезы.
-- Перед повтором numbered runtime-теста читать его отчёт в `docs/`.
-
-### Как сообщить о дефекте платформы
-
-Отправьте короткий текст из submission kit через **Samsung Members → Support
-→ Error reports**, включите **Send system log data**, сохраните номер отчёта и
-передайте его в Samsung Support для эскалации в firmware / GenieZone команду.
-В kit уже есть полный технический текст, hashes и список безопасных вложений.
+Нельзя менять baseline Windows с SHA-256 `2582CAE49FDB3BCD7229280DC8595E5407460BCBADED8FF97AEC73D8211278A7` или запускать скрипты редактирования образа на физическом диске. Образы, firmware binaries, APK и сырые логи намеренно не лежат в обычном Git; см. [политику артефактов](docs/LOCAL_ARTIFACT_POLICY_2026-09-14.md). [Отчёт для Samsung](docs/SAMSUNG_GENIEZONE_SUBMISSION_KIT_2026-09-14.txt) описывает отдельный дефект таймера.

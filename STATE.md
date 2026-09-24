@@ -1,4 +1,76 @@
-# WinAVF state — 2026-09-20
+# WinAVF state — 2026-09-24
+
+## GENERIC_UBUNTU — stock ISO, one-disk control
+
+`GNOME_USERSPACE = PASS` on the app-owned AVF/GenieZone VM. The official
+Ubuntu 24.04.5 ARM64 ISO remains byte-exact and unmodified. A single GPT
+disk carries the audited 128 MiB platform ESP plus a separate ISO9660
+partition with byte-exact stock ISO bytes. This avoids the reproducible
+two-virtio-blk stall after `Freeing initrd memory`.
+
+The final configuration uses the proven U-Boot -> EDK2 -> Ubuntu EFI-stub
+chain, 4 GiB RAM, 1 vCPU, virtio-GPU, one read-write combined disk and
+`useAutoMemoryBalloon(false)`. The bounded raw serial shows `/init`, systemd,
+`Started gdm.service`, `GNOME Shell started`, and `Registering session with
+GDM`; zero SquashFS/loop I/O errors were observed in that run. With
+auto-balloon enabled, identical media repeatedly produced SquashFS failures
+and GDM's session worker failed with `Input/output error`. The internal
+mechanism remains an inference; do not call it a confirmed vendor bug yet.
+
+`GNOME_VISIBLE_IN_APP = NOT_CONFIRMED`: guest virtio-GPU DRM framebuffer
+exists, but no post-EBS frame path into the U-AVF SurfaceView is proven.
+The installed APK's Linux Launch/Stop buttons now select this generic VM.
+Its final APK SHA-256 is
+`299D80A36025FEF81015B15A648DF15717BC4688CAD38B2999DBF7A1A0058374`;
+the passing final-app run left the VM running on the tablet.
+Full hashes, run command and evidence: `docs/GENERIC_UBUNTU_GNOME_USERSPACE_2026-09-24.md`.
+
+## Ubuntu GNOME / public-vsock V17–V18 — 2026-09-21
+
+The public app-owned Linux route now has a proven post-EBS userland control:
+
+```text
+LINUX_KERNEL_POST_EBS        = PASS
+UBUNTU_GNOME_USERLAND        = PASS
+INITRAMFS_VSOCK_HOOK         = PASS
+INITRAMFS_STATIC_LISTENER    = FAIL_TO_EXECUTE
+APP_OWNED_LINUX_VSOCK        = NOT_CONFIRMED
+```
+
+V17 corrected main-Zstd-CPIO placement and the `init-premount/ORDER` control
+file. Its serial log proved `LV:HOOK`; the listener itself then failed with
+`/usr/local/sbin/winavf-vsock-hello: not found`. V18 rebuilt that same static
+ARM64 ELF with a compact 4 KiB `PT_LOAD` offset, but reproduced the identical
+exec failure. The V18 guest nevertheless reached `graphical.target` and the
+Ubuntu serial login prompt, proving the real AVF/GenieZone VM runs Linux
+through kernel, systemd and graphical userland after EBS.
+
+Android `connectVsock(4051)` returned `ENODEV` on V17 and `ECONNRESET` on
+V18, neither of which establishes the listener. Do not infer an AVF-vsock
+failure until a listener executable is first proven runnable in the exact
+initramfs environment. Evidence:
+`docs/UBUNTU_GNOME_VSOCK_V17_V18_RUNTIME_2026-09-21.md`.
+
+## Ubuntu GNOME / public vsock V14 — 2026-09-20
+
+V14 is a disposable Linux-only control that proved the first app-owned
+post-EBS GNOME stack and guest PF_VSOCK registration on the real AVF/GenieZone
+topology:
+
+```text
+LINUX_KERNEL_POST_EBS        = PASS
+LINUX_PF_VSOCK_REGISTERED    = PASS
+UBUNTU_GNOME_DISPLAY_MANAGER = PASS
+UBUNTU_GNOME_USER_SESSION    = PASS
+LINUX_VSOCK_HELLO            = NOT_OBSERVED
+```
+
+The public Android `connectVsock(4051)` call now reaches a VM-side endpoint
+and returns `Connection reset by peer`; V13 had returned `No such device`.
+The listener's `LV:*` marker was absent, so this is not yet guest listener
+proof.  V15 adds precisely one initramfs hook marker before the existing
+static listener.  V14 evidence and cleanup details are in
+`docs/UBUNTU_GNOME_VSOCK_V14_RUNTIME_2026-09-20.md`.
 
 ## Ubuntu post-EBS Device-Tree control — 2026-09-20
 

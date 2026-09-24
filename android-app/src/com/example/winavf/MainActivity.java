@@ -62,19 +62,53 @@ public final class MainActivity extends Activity {
     // Separate disposable Linux profile.  It intentionally shares only the
     // proven kernel-first AVF topology with Windows; it never patches or
     // overwrites the immutable Windows medium.
-    private static final String UBUNTU_GNOME_VM_NAME = "winavf-ubuntu-gnome-24045";
-    private static final String UBUNTU_GNOME_MEDIA_NAME = "ubuntu-gnome-24.04.5-v10-fdtclient-cpu0.img";
+    private static final String UBUNTU_GNOME_VM_NAME = "winavf-ubuntu-gnome-24045-v21";
+    private static final String UBUNTU_GNOME_QUEUE_DEPTH_1_VM_NAME = "winavf-ubuntu-gnome-24045-v21-q1";
+    private static final String UBUNTU_GNOME_MEDIA_NAME = "ubuntu-gnome-24.04.5-v21-vsock-listener.img";
     private static final long UBUNTU_GNOME_MEDIA_SIZE = 9_126_805_504L;
-    private static final String UBUNTU_GNOME_MEDIA_SHA256 = "FB201BABDD0E309D5177D683387495D058ACF910BAAEF8733DCB944CA92E569A";
+    private static final String UBUNTU_GNOME_MEDIA_SHA256 = "F3AAC176C600BFC3D3EA0BE5DA4EFF2F03DE7B27E3DED26A0E9D58D21B975FAB";
     // This patch targets only the disposable Ubuntu raw clone above. It makes
     // KvmTool select the normal DXE Device-Tree handoff; Windows media never
     // reads, stages, or receives this bundle.
-    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_NAME = "ubuntu-gnome-v11-fdt-dxe-firmware.patch";
+    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_NAME = "ubuntu-gnome-v21-vsock-firmware.patch";
     private static final long UBUNTU_GNOME_FIRMWARE_PATCH_SIZE = 4_194_436L;
-    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_SHA256 = "9C109F3EB95D1B6F27929D970152725E0F2328A25FC3C847D8ED1603D86EDC55";
+    private static final String UBUNTU_GNOME_FIRMWARE_PATCH_SHA256 = "936B0E8106806E5E4AC99C4C8E9FD9394F34747992E7E44BBFF885A8AD50553A";
+    private static final String V12_RECOVERY_VM_NAME = "winavf-ubuntu-gnome-v12-recovery";
+    private static final String V12_RECOVERY_MEDIA_NAME = "ubuntu-gnome-v12-recovery-candidate.img";
+    private static final long V12_RECOVERY_MEDIA_SIZE = 9_126_805_504L;
+    private static final String V12_RECOVERY_MEDIA_SHA256 = "C9D80A9CABB14C6E1D0F4F3180923146E354CC916020FB55BB2608FDC3110EA8";
+    private static final String V12_RECOVERY_PATCH_NAME = "ubuntu-gnome-v12-recovery-firmware.patch";
+    private static final long V12_RECOVERY_PATCH_SIZE = 4_194_436L;
+    private static final String V12_RECOVERY_PATCH_SHA256 = "9C109F3EB95D1B6F27929D970152725E0F2328A25FC3C847D8ED1603D86EDC55";
     private static final String IMAGE_PATCH_STAGING_NAME = "winavf-image-patch.bin";
     private static final String IMAGE_PATCH_ACTIVE_NAME = "active-image-patch.bin";
     private static final byte[] IMAGE_PATCH_MAGIC = "WAVFPAT1".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    // Generic Ubuntu is deliberately a separate profile: the ISO is never
+    // patched or copied over a reconstructed raw carrier.  The platform ESP
+    // and stock ISO are supplied independently by the operator.
+    private static final String GENERIC_UBUNTU_VM_NAME = "winavf-generic-ubuntu-24045";
+    private static final String GENERIC_UBUNTU_ISO_NAME = "ubuntu-24.04.5-desktop-arm64.iso";
+    private static final long GENERIC_UBUNTU_ISO_SIZE = 3_967_463_424L;
+    private static final String GENERIC_UBUNTU_ISO_SHA256 = "2BE09CA883921BFF6D8E6B0BFBAFD13E32436553B7086F33BCE3A4C5BAD8BD14";
+    private static final String GENERIC_UBUNTU_PLATFORM_ESP_NAME = "generic-ubuntu-platform-gpt.img";
+    private static final long GENERIC_UBUNTU_PLATFORM_ESP_SIZE = 134_217_728L;
+    private static final String GENERIC_UBUNTU_PLATFORM_ESP_SHA256 = "413B28882832DDC73CA3B425D9676542595590B53B91739FC4A45CDF41046AA2";
+    private static final String GENERIC_UBUNTU_COMBINED_DISK_NAME = "generic-ubuntu-one-disk-journal-rplus.img";
+    private static final long GENERIC_UBUNTU_COMBINED_DISK_SIZE = 4_102_029_312L;
+    private static final String GENERIC_UBUNTU_COMBINED_DISK_SHA256 = "FFABA39B31EA1E95B40F4DD3F67BF5C274C336C6CFF427E7075AC0BD82143714";
+    private static final String GENERIC_UBUNTU_STOCK_KERNEL_NAME = "generic-ubuntu-stock-kernel.efi";
+    private static final String GENERIC_UBUNTU_REPORT_NAME = "generic-ubuntu-runtime-report.txt";
+    // V22 is intentionally isolated from the legacy Linux profile. The ext4
+    // artifact is a control container, not a bootable Ubuntu root filesystem.
+    private static final String V22_EXT4_CONTROL_VM_NAME = "winavf-ubuntu-gnome-24045-v22-ext4-control";
+    private static final String V22_EXT4_CONTROL_MEDIA_NAME = "ubuntu-gnome-v22-ext4-control.img";
+    private static final long V22_EXT4_CONTROL_MEDIA_SIZE = 9_126_805_504L;
+    private static final String V22_EXT4_CONTROL_MEDIA_SHA256 = "F3C9498D0E4EFFAB2E38C75E523492A8CDD CFA9DC6CB3DDF1B48632E26C57D2C".replace(" ", "");
+    private static final String V22_EXT4_CONTROL_LABEL = "V22_EXT4_CONTROL";
+    private static final String V22_EXT4_CONTROL_REPORT_NAME = "ubuntu-gnome-v22-ext4-control-report.txt";
+    private static final String V23_EXT4_BLOCK_IO_VM_NAME = "winavf-ubuntu-gnome-24045-v23-ext4-block-io";
+    private static final String V23_BOOT_CARRIER_NAME = "ubuntu-gnome-v21-v23-disposable-carrier.img";
+    private static final String V23_EXT4_BLOCK_IO_REPORT_NAME = "ubuntu-gnome-v23-ext4-block-io-report.txt";
     private TextView status;
     private TextView logText;
     private FrameSurfaceView frameSurface;
@@ -82,6 +116,12 @@ public final class MainActivity extends Activity {
     private LinearLayout toolbar;
     private LinearLayout settingsPanel;
     private ScrollView logPanel;
+    private View drawerScrim;
+    private TextView profileLabel;
+    private TextView profileDetails;
+    private Button windowsProfileButton;
+    private Button linuxProfileButton;
+    private Button v22ProfileButton;
     private ConsoleFrameDecoder frameDecoder;
     private boolean frameVisible;
     // A product-path UEFI input probe uses the already-proven serial stream,
@@ -95,6 +135,9 @@ public final class MainActivity extends Activity {
     private final StringBuilder uiLog = new StringBuilder();
     private volatile Socket activeKdBridgeSocket;
     private volatile Object activeKdBridgeVm;
+    private LaunchProfile selectedProfile = LaunchProfile.WINDOWS;
+
+    private enum LaunchProfile { WINDOWS, LINUX, V22_EXT4_CONTROL, V23_EXT4_BLOCK_IO }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -138,8 +181,10 @@ public final class MainActivity extends Activity {
                     frameVisible = true;
                     status.setVisibility(View.GONE);
                     toolbar.setVisibility(View.GONE);
-                    settingsPanel.setVisibility(View.GONE);
-                    logPanel.setVisibility(View.GONE);
+                    hideSettingsImmediately();
+                    hideLogPanelImmediately();
+                    drawerScrim.setVisibility(View.GONE);
+                    drawerScrim.setAlpha(0f);
                 });
             }
             @Override public void onProtocolError(String message) {
@@ -150,10 +195,10 @@ public final class MainActivity extends Activity {
         handleIntentActions(getIntent());
     }
 
-    /** Compact product controls; all diagnostic actions remain intent-only. */
+    /** Product controls: profile choice is persistent; diagnostics remain intent-only. */
     private void addProductControls() {
         Button menu = button("☰");
-        menu.setContentDescription("Open WinAVF controls");
+        menu.setContentDescription("Open U-AVF controls");
         menu.setOnClickListener(v -> {
             boolean open = toolbar.getVisibility() != View.VISIBLE;
             toolbar.setVisibility(open ? View.VISIBLE : View.GONE);
@@ -173,15 +218,24 @@ public final class MainActivity extends Activity {
         toolbar.setBackgroundColor(0xE6161A20);
 
         TextView title = new TextView(this);
-        title.setText("WinAVF");
+        title.setText("U-AVF");
         title.setTextColor(Color.WHITE);
         title.setTextSize(18);
         title.setGravity(Gravity.CENTER_VERTICAL);
         toolbar.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1f));
 
+        profileLabel = new TextView(this);
+        profileLabel.setTextColor(0xFFB7D8FF);
+        profileLabel.setTextSize(12);
+        profileLabel.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.addView(profileLabel, new LinearLayout.LayoutParams(dp(84), dp(44)));
+
         Button launch = button("Launch");
-        launch.setOnClickListener(v -> new Thread(this::startTest, "WinAVF-ui-start").start());
+        launch.setOnClickListener(v -> launchSelectedProfile());
         toolbar.addView(launch, new LinearLayout.LayoutParams(-2, dp(44)));
+        Button stop = button("Stop");
+        stop.setOnClickListener(v -> new Thread(this::stopSelectedProfile, "WinAVF-ui-stop").start());
+        toolbar.addView(stop, new LinearLayout.LayoutParams(-2, dp(44)));
         Button settings = button("Settings");
         settings.setOnClickListener(v -> toggleSettings());
         toolbar.addView(settings, new LinearLayout.LayoutParams(-2, dp(44)));
@@ -191,28 +245,61 @@ public final class MainActivity extends Activity {
         FrameLayout.LayoutParams toolbarLayout = new FrameLayout.LayoutParams(-1, dp(60), Gravity.TOP);
         page.addView(toolbar, toolbarLayout);
 
+        drawerScrim = new View(this);
+        drawerScrim.setBackgroundColor(0xA8000000);
+        drawerScrim.setAlpha(0f);
+        drawerScrim.setVisibility(View.GONE);
+        drawerScrim.setOnClickListener(v -> closeOverlays());
+        page.addView(drawerScrim, new FrameLayout.LayoutParams(-1, -1));
+
         settingsPanel = new LinearLayout(this);
         settingsPanel.setOrientation(LinearLayout.VERTICAL);
-        settingsPanel.setPadding(dp(18), dp(14), dp(18), dp(14));
-        settingsPanel.setBackgroundColor(0xF0181D24);
-        TextView settingsText = new TextView(this);
-        settingsText.setTextColor(Color.LTGRAY);
-        settingsText.setTextSize(14);
-        settingsText.setText("Launch profile\n\n"
-                + "• 1 vCPU · verified AVF topology\n"
-                + "• EDK2 GOP → protected WAVF display\n"
-                + "• Windows media is verified before launch\n"
-                + "• Image changes use a transactional path only\n\n"
-                + "Hardware settings are locked. CPU, ACPI, BCD and timer experiments are intentionally disabled.");
-        settingsPanel.addView(settingsText, new LinearLayout.LayoutParams(-1, -2));
+        settingsPanel.setPadding(dp(20), dp(20), dp(20), dp(20));
+        settingsPanel.setBackground(panelBackground(0xFF151A21));
+        TextView settingsTitle = new TextView(this);
+        settingsTitle.setText("Launch settings");
+        settingsTitle.setTextColor(Color.WHITE);
+        settingsTitle.setTextSize(20);
+        settingsPanel.addView(settingsTitle, new LinearLayout.LayoutParams(-1, -2));
+        TextView settingsHint = new TextView(this);
+        settingsHint.setText("Choose the guest profile. The selection is retained for the next launch.");
+        settingsHint.setTextColor(0xFFB5BBC3);
+        settingsHint.setTextSize(13);
+        settingsHint.setPadding(0, dp(6), 0, dp(16));
+        settingsPanel.addView(settingsHint, new LinearLayout.LayoutParams(-1, -2));
+
+        windowsProfileButton = button("Windows mode");
+        windowsProfileButton.setOnClickListener(v -> selectProfile(LaunchProfile.WINDOWS));
+        settingsPanel.addView(windowsProfileButton, new LinearLayout.LayoutParams(-1, dp(48)));
+        linuxProfileButton = button("Linux mode");
+        linuxProfileButton.setOnClickListener(v -> selectProfile(LaunchProfile.LINUX));
+        LinearLayout.LayoutParams linuxButtonLayout = new LinearLayout.LayoutParams(-1, dp(48));
+        linuxButtonLayout.setMargins(0, dp(8), 0, 0);
+        settingsPanel.addView(linuxProfileButton, linuxButtonLayout);
+        // Keep the V22 diagnostic intent available, but expose only the two
+        // supported user-facing profiles in the settings drawer.
+        v22ProfileButton = button("V22 ext4 control");
+
+        profileDetails = new TextView(this);
+        profileDetails.setTextColor(0xFFD4D8DD);
+        profileDetails.setTextSize(13);
+        profileDetails.setPadding(0, dp(20), 0, 0);
+        settingsPanel.addView(profileDetails, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView locked = new TextView(this);
+        locked.setText("Hardware topology is intentionally locked: 1 vCPU, verified AVF configuration and transactional media checks.");
+        locked.setTextColor(0xFF8F98A3);
+        locked.setTextSize(12);
+        locked.setPadding(0, dp(20), 0, 0);
+        settingsPanel.addView(locked, new LinearLayout.LayoutParams(-1, -2));
         settingsPanel.setVisibility(View.GONE);
-        FrameLayout.LayoutParams settingsLayout = new FrameLayout.LayoutParams(dp(330), -2, Gravity.TOP | Gravity.END);
+        FrameLayout.LayoutParams settingsLayout = new FrameLayout.LayoutParams(dp(360), -2, Gravity.TOP | Gravity.END);
         settingsLayout.setMargins(0, dp(70), dp(10), 0);
         page.addView(settingsPanel, settingsLayout);
 
         logPanel = new ScrollView(this);
         logPanel.setFillViewport(true);
-        logPanel.setBackgroundColor(0xF0101419);
+        logPanel.setBackground(panelBackground(0xFF101419));
         logText = new TextView(this);
         logText.setTextColor(0xFFD4D8DD);
         logText.setTextSize(12);
@@ -220,9 +307,10 @@ public final class MainActivity extends Activity {
         logText.setPadding(dp(14), dp(12), dp(14), dp(12));
         logPanel.addView(logText, new ScrollView.LayoutParams(-1, -2));
         logPanel.setVisibility(View.GONE);
-        FrameLayout.LayoutParams logsLayout = new FrameLayout.LayoutParams(-1, dp(300), Gravity.BOTTOM);
+        FrameLayout.LayoutParams logsLayout = new FrameLayout.LayoutParams(-1, dp(340), Gravity.BOTTOM);
         logsLayout.setMargins(dp(10), 0, dp(10), dp(10));
         page.addView(logPanel, logsLayout);
+        restoreProfile();
     }
 
     private Button button(String text) {
@@ -231,8 +319,16 @@ public final class MainActivity extends Activity {
         result.setTextSize(13);
         result.setTextColor(Color.WHITE);
         result.setAllCaps(false);
-        result.setBackgroundColor(0xFF242B35);
+        result.setBackground(panelBackground(0xFF242B35));
         return result;
+    }
+
+    private android.graphics.drawable.GradientDrawable panelBackground(int color) {
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+        background.setColor(color);
+        background.setCornerRadius(dp(14));
+        background.setStroke(dp(1), 0xFF343D49);
+        return background;
     }
 
     private int dp(int value) {
@@ -241,20 +337,134 @@ public final class MainActivity extends Activity {
 
     private void toggleSettings() {
         boolean show = settingsPanel.getVisibility() != View.VISIBLE;
-        settingsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
-        if (show) logPanel.setVisibility(View.GONE);
+        if (show) {
+            hideLogPanelImmediately();
+            showScrim();
+            settingsPanel.setAlpha(0f);
+            settingsPanel.setTranslationX(dp(380));
+            settingsPanel.setVisibility(View.VISIBLE);
+            settingsPanel.animate().alpha(1f).translationX(0f).setDuration(240).start();
+        } else {
+            hideSettingsDrawer();
+        }
     }
 
     private void toggleLogs() {
         boolean show = logPanel.getVisibility() != View.VISIBLE;
-        if (show) refreshLogPanel();
-        logPanel.setVisibility(show ? View.VISIBLE : View.GONE);
-        if (show) settingsPanel.setVisibility(View.GONE);
+        if (show) {
+            refreshLogPanel();
+            hideSettingsImmediately();
+            showScrim();
+            logPanel.setAlpha(0f);
+            logPanel.setTranslationY(dp(360));
+            logPanel.setVisibility(View.VISIBLE);
+            logPanel.animate().alpha(1f).translationY(0f).setDuration(240).start();
+        } else {
+            hideLogDrawer();
+        }
+    }
+
+    private void showScrim() {
+        drawerScrim.animate().cancel();
+        drawerScrim.setVisibility(View.VISIBLE);
+        drawerScrim.animate().alpha(1f).setDuration(180).start();
+    }
+
+    private void hideScrim() {
+        if (settingsPanel.getVisibility() == View.VISIBLE || logPanel.getVisibility() == View.VISIBLE) return;
+        drawerScrim.animate().alpha(0f).setDuration(160)
+                .withEndAction(() -> drawerScrim.setVisibility(View.GONE)).start();
+    }
+
+    private void closeOverlays() {
+        hideSettingsDrawer();
+        hideLogDrawer();
+    }
+
+    private void hideSettingsDrawer() {
+        if (settingsPanel.getVisibility() != View.VISIBLE) return;
+        settingsPanel.animate().alpha(0f).translationX(dp(380)).setDuration(180)
+                .withEndAction(() -> { settingsPanel.setVisibility(View.GONE); hideScrim(); }).start();
+    }
+
+    private void hideLogDrawer() {
+        if (logPanel.getVisibility() != View.VISIBLE) return;
+        logPanel.animate().alpha(0f).translationY(dp(360)).setDuration(180)
+                .withEndAction(() -> { logPanel.setVisibility(View.GONE); hideScrim(); }).start();
+    }
+
+    private void hideSettingsImmediately() {
+        settingsPanel.animate().cancel();
+        settingsPanel.setVisibility(View.GONE);
+        settingsPanel.setAlpha(1f);
+        settingsPanel.setTranslationX(0f);
+    }
+
+    private void hideLogPanelImmediately() {
+        logPanel.animate().cancel();
+        logPanel.setVisibility(View.GONE);
+        logPanel.setAlpha(1f);
+        logPanel.setTranslationY(0f);
     }
 
     private void refreshLogPanel() {
-        String serial = readTail(new File(getExternalFilesDir(null), "serial.log"), 16 * 1024);
-        logText.setText("WINAVF EVENT LOG\n" + uiLog + (serial.isEmpty() ? "" : "\nRAW SERIAL TAIL\n" + serial));
+        String filename = selectedProfile == LaunchProfile.LINUX ? "generic-ubuntu-serial.log" : "serial.log";
+        String serial = readTail(new File(getExternalFilesDir(null), filename), 16 * 1024);
+        logText.setText("U-AVF EVENT LOG — " + selectedProfile.name() + "\n" + uiLog
+                + (serial.isEmpty() ? "\nNo serial output has been captured for this profile." : "\nRAW SERIAL TAIL\n" + serial));
+    }
+
+    private void restoreProfile() {
+        String saved = getPreferences(MODE_PRIVATE).getString("launch_profile", LaunchProfile.WINDOWS.name());
+        try { selectedProfile = LaunchProfile.valueOf(saved); } catch (IllegalArgumentException ignored) { selectedProfile = LaunchProfile.WINDOWS; }
+        if (selectedProfile == LaunchProfile.V22_EXT4_CONTROL) selectedProfile = LaunchProfile.WINDOWS;
+        updateProfileUi();
+    }
+
+    private void selectProfile(LaunchProfile profile) {
+        selectedProfile = profile;
+        getPreferences(MODE_PRIVATE).edit().putString("launch_profile", profile.name()).apply();
+        updateProfileUi();
+        show(profile == LaunchProfile.WINDOWS ? "Windows mode selected." : "Linux mode selected.");
+    }
+
+    private void updateProfileUi() {
+        if (profileLabel == null || profileDetails == null) return;
+        boolean windows = selectedProfile == LaunchProfile.WINDOWS;
+        boolean v22 = selectedProfile == LaunchProfile.V22_EXT4_CONTROL;
+        profileLabel.setText(windows ? "WINDOWS" : (v22 ? "V22" : "LINUX"));
+        windowsProfileButton.setBackground(panelBackground(windows ? 0xFF1667B7 : 0xFF242B35));
+        linuxProfileButton.setBackground(panelBackground(!windows && !v22 ? 0xFF2B7A4B : 0xFF242B35));
+        v22ProfileButton.setBackground(panelBackground(v22 ? 0xFF8A5A16 : 0xFF242B35));
+        profileDetails.setText(windows
+                ? "Windows mode\nUses the immutable verified Windows boot medium. Launch starts the proven EDK2 → Windows Boot Manager path."
+                : (v22
+                ? "V22 ext4 control\nValidates and stages the isolated V22 control container. Launch remains blocked until a bootable Ubuntu root and guest control protocol are supplied."
+                : "Linux mode\nBoots the verified stock Ubuntu ISO from one platform disk. GNOME Shell is confirmed; in-app desktop display is still experimental."));
+    }
+
+    private void launchSelectedProfile() {
+        if (selectedProfile == LaunchProfile.LINUX) {
+            new Thread(() -> startGenericUbuntu(false, false, true), "WinAVF-ui-linux-start").start();
+        } else if (selectedProfile == LaunchProfile.V22_EXT4_CONTROL) {
+            new Thread(this::startV22Ext4Control, "WinAVF-ui-v22-start").start();
+        } else {
+            new Thread(this::startTest, "WinAVF-ui-windows-start").start();
+        }
+    }
+
+    private void stopSelectedProfile() {
+        String vmName = selectedProfile == LaunchProfile.LINUX ? GENERIC_UBUNTU_VM_NAME
+                : (selectedProfile == LaunchProfile.V22_EXT4_CONTROL ? V22_EXT4_CONTROL_VM_NAME : VM_NAME);
+        try {
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            Object vm = manager.getClass().getMethod("get", String.class).invoke(manager, vmName);
+            if (vm == null) { show("No running " + selectedProfile.name().toLowerCase() + " VM."); return; }
+            vm.getClass().getMethod("stop").invoke(vm);
+            show(selectedProfile.name().substring(0, 1) + selectedProfile.name().substring(1).toLowerCase() + " VM stop requested.");
+        } catch (Throwable error) {
+            show("Could not stop VM: " + rootMessage(error));
+        }
     }
 
     private static String readTail(File file, int maxBytes) {
@@ -280,10 +490,36 @@ public final class MainActivity extends Activity {
             new Thread(this::startTest, "WinAVF-start").start();
         }
         if (intent.getBooleanExtra("ubuntu_gnome", false)) {
-            new Thread(this::startUbuntuGnome, "WinAVF-ubuntu-gnome").start();
+            new Thread(() -> startUbuntuGnome(false), "WinAVF-ubuntu-gnome").start();
+        }
+        if (intent.getBooleanExtra("ubuntu_gnome_queue_depth_1", false)) {
+            new Thread(() -> startUbuntuGnome(true), "WinAVF-ubuntu-gnome-q1").start();
+        }
+        if (intent.getBooleanExtra("v12_recovery", false)) {
+            android.util.Log.e("WinAVF", "V12_INTENT_RECEIVED");
+            android.util.Log.e("WinAVF", "V12_PROFILE_SELECTED");
+            new Thread(this::startV12Recovery, "WinAVF-v12-recovery").start();
+        }
+        if (intent.getBooleanExtra("generic_ubuntu", false)) {
+            new Thread(() -> startGenericUbuntu(true, false, false), "WinAVF-generic-ubuntu").start();
+        }
+        if (intent.getBooleanExtra("generic_ubuntu_no_iso", false)) {
+            new Thread(() -> startGenericUbuntu(false, false, false), "WinAVF-generic-ubuntu-no-iso").start();
+        }
+        if (intent.getBooleanExtra("generic_ubuntu_second_esp", false)) {
+            new Thread(() -> startGenericUbuntu(false, true, false), "WinAVF-generic-ubuntu-second-esp").start();
+        }
+        if (intent.getBooleanExtra("generic_ubuntu_combined", false)) {
+            new Thread(() -> startGenericUbuntu(false, false, true), "WinAVF-generic-ubuntu-combined").start();
         }
         if (intent.getBooleanExtra("ubuntu_gnome_cleanup", false)) {
             new Thread(this::cleanupUbuntuGnome, "WinAVF-ubuntu-gnome-cleanup").start();
+        }
+        if (intent.getBooleanExtra("v22_ext4_control", false)) {
+            new Thread(this::startV22Ext4Control, "WinAVF-v22-ext4-control").start();
+        }
+        if (intent.getBooleanExtra("v23_ext4_block_io", false)) {
+            new Thread(this::startV23Ext4BlockIo, "WinAVF-v23-ext4-block-io").start();
         }
         if (intent.getBooleanExtra("uefi_input_probe", false)) {
             new Thread(this::startUefiInputProbe, "WinAVF-uefi-input").start();
@@ -370,6 +606,7 @@ public final class MainActivity extends Activity {
                 "android.system.virtualmachine.VirtualMachineConfig$Builder",
                 "android.system.virtualmachine.VirtualMachineCustomImageConfig",
                 "android.system.virtualmachine.VirtualMachineCustomImageConfig$Builder",
+                "android.system.virtualmachine.VirtualMachineCustomImageConfig$Disk",
                 "android.system.virtualmachine.VirtualMachineCustomImageConfig$DisplayConfig",
                 "android.system.virtualmachine.VirtualMachineCustomImageConfig$DisplayConfig$Builder",
                 "android.system.virtualmachine.VirtualMachineCustomImageConfig$GpuConfig",
@@ -391,13 +628,13 @@ public final class MainActivity extends Activity {
                     Arrays.sort(methods, (a, b) -> a.toString().compareTo(b.toString()));
                     for (Method method : methods) {
                         String value = method.toString();
-                        if (value.toLowerCase().matches(".*(display|graphics|gpu|surface|console|input|keyboard|mouse|touch|virtio|socket|vsock).*")) out.println("  METHOD " + value);
+                        if (value.toLowerCase().matches(".*(disk|display|graphics|gpu|surface|console|input|keyboard|mouse|touch|virtio|socket|vsock).*")) out.println("  METHOD " + value);
                     }
                     Field[] fields = type.getDeclaredFields();
                     Arrays.sort(fields, (a, b) -> a.toString().compareTo(b.toString()));
                     for (Field field : fields) {
                         String value = field.toString();
-                        if (value.toLowerCase().matches(".*(display|graphics|gpu|surface|console|input|keyboard|mouse|touch|virtio|socket|vsock).*")) out.println("  FIELD " + value);
+                        if (value.toLowerCase().matches(".*(disk|display|graphics|gpu|surface|console|input|keyboard|mouse|touch|virtio|socket|vsock).*")) out.println("  FIELD " + value);
                     }
                 } catch (Throwable error) {
                     out.println("CLASS " + name + " UNAVAILABLE " + rootMessage(error));
@@ -766,27 +1003,34 @@ public final class MainActivity extends Activity {
      * image is disposable and has its own app-private disk/VM name, so this
      * cannot modify the Windows milestone medium or its rollback state.
      */
-    private void startUbuntuGnome() {
+    private void startUbuntuGnome(boolean queueDepthOne) {
         try {
             frameVisible = false;
             observedFrameCount = 0;
             File payload = new File(getFilesDir(), "ubuntu-gnome-payload");
             if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create Ubuntu payload directory");
             File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
-            File staged = new File(getExternalFilesDir(null), UBUNTU_GNOME_MEDIA_NAME);
-            if (!staged.isFile() || staged.length() != UBUNTU_GNOME_MEDIA_SIZE) {
-                throw new IllegalStateException("Missing Ubuntu GNOME staging medium: " + staged);
+            File disk = new File(payload, UBUNTU_GNOME_MEDIA_NAME);
+            if (disk.exists()) {
+                if (!disk.isFile() || disk.length() != UBUNTU_GNOME_MEDIA_SIZE) {
+                    throw new IllegalStateException("Existing private Ubuntu medium has an unexpected type or length");
+                }
+                show("Using preloaded app-private Ubuntu GNOME medium.");
+            } else {
+                File staged = new File(getExternalFilesDir(null), UBUNTU_GNOME_MEDIA_NAME);
+                if (!staged.isFile() || staged.length() != UBUNTU_GNOME_MEDIA_SIZE) {
+                    throw new IllegalStateException("Missing Ubuntu GNOME staging medium: " + staged);
+                }
+                if (!UBUNTU_GNOME_MEDIA_SHA256.equals(hex(sha256File(staged)))) {
+                    throw new SecurityException("Ubuntu GNOME staging hash mismatch");
+                }
+                disk = copyFile(staged, disk, UBUNTU_GNOME_MEDIA_SIZE, false);
             }
-            if (!UBUNTU_GNOME_MEDIA_SHA256.equals(hex(sha256File(staged)))) {
-                throw new SecurityException("Ubuntu GNOME staging hash mismatch");
-            }
-            File disk = copyFile(staged, new File(payload, UBUNTU_GNOME_MEDIA_NAME), UBUNTU_GNOME_MEDIA_SIZE, false);
             // The Android-private copy is the actual crosvm backing file.  A
-            // matching staging hash and file length alone do not prove that a
-            // long copy reached this file byte-for-byte.  Gate the disposable
-            // Linux launch on its own full hash before applying the local FD
-            // patch, so a live-root read failure cannot be misclassified as a
-            // Linux, FDT, or virtio regression.
+            // direct adb preload or a normal staging copy still needs a full
+            // hash gate before applying the local FD patch.  That keeps a
+            // live-root read failure from being misclassified as a Linux,
+            // FDT, or virtio regression.
             if (!UBUNTU_GNOME_MEDIA_SHA256.equals(hex(sha256File(disk)))) {
                 throw new SecurityException("Ubuntu GNOME private-media hash mismatch");
             }
@@ -803,21 +1047,238 @@ public final class MainActivity extends Activity {
                     UBUNTU_GNOME_FIRMWARE_PATCH_SIZE,
                     false);
             applyPatch(privateFirmwarePatch, disk, false);
-            Object config = buildConfig(kernel, disk, false, UBUNTU_GNOME_VM_NAME);
+            String vmName = queueDepthOne ? UBUNTU_GNOME_QUEUE_DEPTH_1_VM_NAME : UBUNTU_GNOME_VM_NAME;
+            String kernelParams = queueDepthOne ? "mem=2G virtio_blk.queue_depth=1" : "mem=2G";
+            Object config = buildConfig(kernel, disk, false, vmName, kernelParams);
             Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
             try {
-                Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
-                if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, UBUNTU_GNOME_VM_NAME);
+                Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, vmName);
+                if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, vmName);
             } catch (Exception ignored) { }
-            Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, UBUNTU_GNOME_VM_NAME, config);
+            Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, vmName, config);
             attachCallback(vm);
             InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
-            startConsoleReader(console, "ubuntu-gnome-serial.log");
+            startConsoleReader(console, queueDepthOne ? "ubuntu-gnome-q1-serial.log" : "ubuntu-gnome-serial.log");
             vm.getClass().getMethod("run").invoke(vm);
             startUbuntuVsockHelloProbe(vm);
-            show("Ubuntu GNOME live profile launched; capturing its complete serial log.");
+            show(queueDepthOne
+                    ? "Ubuntu GNOME queue_depth=1 diagnostic launched; capturing its complete serial log."
+                    : "Ubuntu GNOME live profile launched; capturing its complete serial log.");
         } catch (Throwable t) {
             show("Ubuntu GNOME launch failed: " + rootMessage(t));
+        }
+    }
+
+    private void startV12Recovery() {
+        try {
+            File payload = new File(getFilesDir(), "v12-recovery-payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create V12 payload directory");
+            File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
+            File staged = new File(getExternalFilesDir(null), V12_RECOVERY_MEDIA_NAME);
+            if (!staged.isFile() || staged.length() != V12_RECOVERY_MEDIA_SIZE) throw new IllegalStateException("Missing V12 recovery carrier");
+            if (!V12_RECOVERY_MEDIA_SHA256.equals(hex(sha256File(staged)))) throw new SecurityException("V12 recovery carrier hash mismatch");
+            File patch = new File(getExternalFilesDir(null), V12_RECOVERY_PATCH_NAME);
+            if (!patch.isFile() || patch.length() != V12_RECOVERY_PATCH_SIZE) throw new IllegalStateException("Missing V12 recovery patch");
+            if (!V12_RECOVERY_PATCH_SHA256.equals(hex(sha256File(patch)))) throw new SecurityException("V12 recovery patch hash mismatch");
+            android.util.Log.e("WinAVF", "V12_MEDIA_GATE_PASS");
+            File disk = copyFile(staged, new File(payload, V12_RECOVERY_MEDIA_NAME), V12_RECOVERY_MEDIA_SIZE, false);
+            Object config = buildConfig(kernel, disk, false, V12_RECOVERY_VM_NAME, "mem=2G");
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            try { Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, V12_RECOVERY_VM_NAME); if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, V12_RECOVERY_VM_NAME); } catch (Exception ignored) { }
+            android.util.Log.e("WinAVF", "V12_VM_CREATE_BEGIN");
+            Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, V12_RECOVERY_VM_NAME, config);
+            attachCallback(vm);
+            InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
+            android.util.Log.e("WinAVF", "V12_SERIAL_OPENED");
+            startConsoleReader(console, "v12-recovery-serial.log");
+            android.util.Log.e("WinAVF", "V12_VM_RUN_BEGIN");
+            vm.getClass().getMethod("run").invoke(vm);
+            show("V12_RECOVERY launched; capturing serial output.");
+        } catch (Throwable t) {
+            String message = "V12_RECOVERY launch failed: " + rootMessage(t);
+            android.util.Log.e("WinAVF", message, t);
+            show(message);
+        }
+    }
+
+    /** Stock Ubuntu profile; ISO bytes are verified and never patched. */
+    private void startGenericUbuntu(boolean withIso, boolean secondEsp, boolean combined) {
+        File report = new File(getExternalFilesDir(null), GENERIC_UBUNTU_REPORT_NAME);
+        try {
+            File iso = new File(getExternalFilesDir(null), GENERIC_UBUNTU_ISO_NAME);
+            File esp = new File(getExternalFilesDir(null), GENERIC_UBUNTU_PLATFORM_ESP_NAME);
+            if (!iso.isFile() || iso.length() != GENERIC_UBUNTU_ISO_SIZE) throw new IllegalStateException("Missing stock Ubuntu ISO or unexpected length");
+            if (!GENERIC_UBUNTU_ISO_SHA256.equals(hex(sha256File(iso)))) throw new SecurityException("Stock Ubuntu ISO SHA-256 mismatch");
+            if (!esp.isFile() || esp.length() != GENERIC_UBUNTU_PLATFORM_ESP_SIZE) throw new IllegalStateException("Missing GPT platform ESP or unexpected length");
+            if (!GENERIC_UBUNTU_PLATFORM_ESP_SHA256.equals(hex(sha256File(esp)))) throw new SecurityException("GPT platform ESP SHA-256 mismatch");
+            File combinedDisk = new File(getExternalFilesDir(null), GENERIC_UBUNTU_COMBINED_DISK_NAME);
+            if (combined && (!combinedDisk.isFile() || combinedDisk.length() != GENERIC_UBUNTU_COMBINED_DISK_SIZE
+                    || !GENERIC_UBUNTU_COMBINED_DISK_SHA256.equals(hex(sha256File(combinedDisk))))) {
+                throw new SecurityException("Combined disk size/SHA-256 mismatch");
+            }
+            File payload = new File(getFilesDir(), "generic-ubuntu-payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create generic Ubuntu payload");
+            File privateIso = withIso ? copyFile(iso, new File(payload, GENERIC_UBUNTU_ISO_NAME), GENERIC_UBUNTU_ISO_SIZE, false) : iso;
+            File privateEsp = combined
+                    ? copyFile(combinedDisk, new File(payload, GENERIC_UBUNTU_COMBINED_DISK_NAME), combinedDisk.length(), false)
+                    : copyFile(esp, new File(payload, GENERIC_UBUNTU_PLATFORM_ESP_NAME), esp.length(), false);
+            File duplicateEsp = secondEsp ? copyFile(esp, new File(payload, "generic-ubuntu-second-esp-control.img"), esp.length(), false) : null;
+            File kernel = copyAsset("u-boot-wrapper-v24.Image", new File(payload, "u-boot-wrapper-v24.Image"), -1L);
+            Object config = buildGenericUbuntuConfig(kernel, privateEsp, privateIso, duplicateEsp, withIso);
+            Object manager = getSystemService((Class) Class.forName("android.system.virtualmachine.VirtualMachineManager"));
+            try { Object prior = manager.getClass().getMethod("get", String.class).invoke(manager, GENERIC_UBUNTU_VM_NAME); if (prior != null) manager.getClass().getMethod("delete", String.class).invoke(manager, GENERIC_UBUNTU_VM_NAME); } catch (Exception ignored) { }
+            Object vm = manager.getClass().getMethod("create", String.class, config.getClass()).invoke(manager, GENERIC_UBUNTU_VM_NAME, config);
+            attachCallback(vm);
+            InputStream console = (InputStream) vm.getClass().getMethod("getConsoleOutput").invoke(vm);
+            startConsoleReader(console, "generic-ubuntu-serial.log");
+            vm.getClass().getMethod("run").invoke(vm);
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=GENERIC_UBUNTU");
+                out.println("STOCK_UBUNTU_24_04_5_UNMODIFIED=PASS");
+                out.println("ISO_SHA256=" + hex(sha256File(privateIso)));
+                out.println("PLATFORM_ESP_PRESENT=PASS");
+                out.println("PLATFORM_EFI_LOADER_PRESENT=PASS");
+                out.println("BOOT_CHAIN=KERNEL_FIRST_UBOOT_THEN_ESP_EDK2");
+                out.println("SECOND_ISO_BLOCK_DISK=" + (withIso ? "PRESENT" : "ABSENT_DIAGNOSTIC"));
+                out.println("SECOND_ESP_CONTROL_DISK=" + (secondEsp ? "PRESENT" : "ABSENT"));
+                out.println("ONE_DISK_ESP_PLUS_STOCK_ISO_PARTITION=" + (combined ? "PASS" : "NO"));
+                out.println("VM_LAUNCH=PASS");
+            }
+            show("GENERIC_UBUNTU launched with untouched stock ISO.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=GENERIC_UBUNTU");
+                out.println("STOCK_UBUNTU_24_04_5_UNMODIFIED=NOT_REACHED");
+                out.println("ERROR=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("GENERIC_UBUNTU launch failed: " + rootMessage(error));
+        }
+    }
+
+    private Object buildGenericUbuntuConfig(File kernel, File esp, File iso, File duplicateEsp, boolean withIso) throws Exception {
+        Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
+        Object image = Class.forName(custom.getName() + "$Builder").getConstructor().newInstance();
+        call(image, "setName", String.class, GENERIC_UBUNTU_VM_NAME);
+        call(image, "setOsName", String.class, "ubuntu-24.04.5-stock");
+        call(image, "setKernelPath", String.class, kernel.getAbsolutePath());
+        call(image, "useNetwork", boolean.class, false);
+        call(image, "useAutoMemoryBalloon", boolean.class, false);
+        Class<?> disk = Class.forName(custom.getName() + "$Disk");
+        call(image, "addDisk", disk, disk.getMethod("RWDisk", String.class).invoke(null, esp.getAbsolutePath()));
+        if (withIso) call(image, "addDisk", disk, disk.getMethod("RODisk", String.class).invoke(null, iso.getAbsolutePath()));
+        if (duplicateEsp != null) call(image, "addDisk", disk, disk.getMethod("RODisk", String.class).invoke(null, duplicateEsp.getAbsolutePath()));
+        Class<?> displayBuilder = Class.forName(custom.getName() + "$DisplayConfig$Builder");
+        Object display = displayBuilder.getConstructor().newInstance();
+        call(display, "setWidth", int.class, 1280);
+        call(display, "setHeight", int.class, 800);
+        call(display, "setHorizontalDpi", int.class, 160);
+        call(display, "setVerticalDpi", int.class, 160);
+        call(display, "setRefreshRate", int.class, 60);
+        Object displayConfig = call(display, "build");
+        call(image, "setDisplayConfig", displayConfig.getClass(), displayConfig);
+        Class<?> gpuBuilder = Class.forName(custom.getName() + "$GpuConfig$Builder");
+        Object gpuConfig = call(gpuBuilder.getConstructor().newInstance(), "build");
+        call(image, "setGpuConfig", gpuConfig.getClass(), gpuConfig);
+        Object customConfig = call(image, "build");
+        Class<?> vmConfig = Class.forName("android.system.virtualmachine.VirtualMachineConfig");
+        Object builder = Class.forName(vmConfig.getName() + "$Builder").getConstructor(android.content.Context.class).newInstance(this);
+        call(builder, "setProtectedVm", boolean.class, false);
+        call(builder, "setMemoryBytes", long.class, 4L * 1024 * 1024 * 1024);
+        call(builder, "setCpuTopology", int.class, vmConfig.getField("CPU_TOPOLOGY_ONE_CPU").getInt(null));
+        call(builder, "setDebugLevel", int.class, 1);
+        call(builder, "setConsoleInputDevice", String.class, "ttyS0");
+        call(builder, "setVmOutputCaptured", boolean.class, true);
+        call(builder, "setVmConsoleInputSupported", boolean.class, true);
+        call(builder, "setCustomImageConfig", custom, customConfig);
+        return call(builder, "build");
+    }
+
+    /**
+     * Validates and stages the V22 control image without pretending it is a
+     * bootable guest disk. A root/initrd and guest protocol are prerequisites
+     * for creating an AVF VM, so this path records the exact blocker instead.
+     */
+    private void startV22Ext4Control() {
+        File report = new File(getExternalFilesDir(null), V22_EXT4_CONTROL_REPORT_NAME);
+        try {
+            File staged = new File(getExternalFilesDir(null), V22_EXT4_CONTROL_MEDIA_NAME);
+            if (!staged.isFile() || staged.length() != V22_EXT4_CONTROL_MEDIA_SIZE) {
+                throw new IllegalStateException("Missing V22 control image: " + staged);
+            }
+            String hash = hex(sha256File(staged));
+            if (!V22_EXT4_CONTROL_MEDIA_SHA256.equals(hash)) {
+                throw new SecurityException("V22 control image hash mismatch: " + hash);
+            }
+            File payload = new File(getFilesDir(), "v22-ext4-control-payload");
+            if (!payload.exists() && !payload.mkdirs()) throw new IllegalStateException("Cannot create V22 payload directory");
+            File privateControl = copyFile(staged, new File(payload, V22_EXT4_CONTROL_MEDIA_NAME), V22_EXT4_CONTROL_MEDIA_SIZE, false);
+            String privateHash = hex(sha256File(privateControl));
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=V22_EXT4_CONTROL");
+                out.println("VM_NAME=" + V22_EXT4_CONTROL_VM_NAME);
+                out.println("MEDIA_NAME=" + V22_EXT4_CONTROL_MEDIA_NAME);
+                out.println("MEDIA_LABEL=" + V22_EXT4_CONTROL_LABEL);
+                out.println("MEDIA_BYTES=" + V22_EXT4_CONTROL_MEDIA_SIZE);
+                out.println("MEDIA_SHA256=" + privateHash);
+                out.println("CONTROL_IMAGE_STAGED=PASS");
+                out.println("BOOTABLE_UBUNTU_ROOT=BLOCKED");
+                out.println("BOOTABLE_UBUNTU_ROOT_REASON=No guest root filesystem or EFI/initrd boot contract is present; control image must not be used as root disk.");
+                out.println("EXT4_BLOCK_IO_CONTROL=BLOCKED");
+                out.println("EXT4_BLOCK_IO_CONTROL_REASON=Guest-side EXT4_BLOCK_IO_CONTROL protocol and runnable Ubuntu payload are unconfirmed.");
+                out.println("VM_LAUNCH=NOT_ATTEMPTED");
+            }
+            show("V22 control image staged; launch blocked pending Ubuntu root and guest protocol.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=V22_EXT4_CONTROL");
+                out.println("EXT4_BLOCK_IO_CONTROL=BLOCKED");
+                out.println("ERROR=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("V22 control path blocked: " + rootMessage(error));
+        }
+    }
+
+    /**
+     * V23 records the first multi-disk AVF boundary without launching an
+     * unbootable guest.  The device audit proved Disk.RODisk/RWDisk and
+     * Builder.addDisk(Disk); a verified boot carrier is still required before
+     * the two read-only disks can be submitted to virtualizationservice.
+     */
+    private void startV23Ext4BlockIo() {
+        File report = new File(getExternalFilesDir(null), V23_EXT4_BLOCK_IO_REPORT_NAME);
+        try {
+            File carrier = new File(getExternalFilesDir(null), V23_BOOT_CARRIER_NAME);
+            File control = new File(getExternalFilesDir(null), V22_EXT4_CONTROL_MEDIA_NAME);
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=V23_EXT4_BLOCK_IO");
+                out.println("VM_NAME=" + V23_EXT4_BLOCK_IO_VM_NAME);
+                out.println("AVF_DISK_API=Disk.RODisk(String)+Builder.addDisk(Disk)");
+                out.println("CONTROL_DISK_PRESENT=" + control.isFile());
+                out.println("BOOT_CARRIER_PRESENT=" + carrier.isFile());
+                if (!control.isFile() || control.length() != V22_EXT4_CONTROL_MEDIA_SIZE) {
+                    out.println("EXT4_BLOCK_IO=BLOCKED");
+                    out.println("REASON=Verified V22 control disk is not staged");
+                } else if (!V22_EXT4_CONTROL_MEDIA_SHA256.equals(hex(sha256File(control)))) {
+                    out.println("EXT4_BLOCK_IO=BLOCKED");
+                    out.println("REASON=V22 control disk hash mismatch");
+                } else if (!carrier.isFile() || carrier.length() == 0) {
+                    out.println("EXT4_BLOCK_IO=BLOCKED");
+                    out.println("REASON=Verified V21 boot carrier is not staged; VM launch not attempted");
+                } else {
+                    out.println("CONTROL_DISK_SHA256=" + hex(sha256File(control)));
+                    out.println("BOOT_CARRIER_BYTES=" + carrier.length());
+                    out.println("EXT4_BLOCK_IO=API_READY_GUEST_CARRIER_PENDING_HASH");
+                    out.println("VM_LAUNCH=NOT_ATTEMPTED");
+                }
+            }
+            show("V23 two-disk API boundary audited; guest launch remains gated by verified boot carrier.");
+        } catch (Throwable error) {
+            try (PrintWriter out = new PrintWriter(new FileOutputStream(report, false))) {
+                out.println("PROFILE=V23_EXT4_BLOCK_IO");
+                out.println("EXT4_BLOCK_IO=BLOCKED");
+                out.println("ERROR=" + rootMessage(error));
+            } catch (Throwable ignored) { }
+            show("V23 block-I/O path blocked: " + rootMessage(error));
         }
     }
 
@@ -1449,16 +1910,23 @@ public final class MainActivity extends Activity {
     }
 
     private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe) throws Exception {
-        return buildConfig(kernel, esp, enableKeyboardProbe, VM_NAME);
+        return buildConfig(kernel, esp, enableKeyboardProbe, VM_NAME, null);
     }
 
     private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe, String vmName) throws Exception {
+        return buildConfig(kernel, esp, enableKeyboardProbe, vmName, null);
+    }
+
+    private Object buildConfig(File kernel, File esp, boolean enableKeyboardProbe, String vmName, String kernelParams) throws Exception {
         Class<?> custom = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
         Class<?> customBuilder = Class.forName(custom.getName() + "$Builder");
         Object image = customBuilder.getConstructor().newInstance();
         call(image, "setName", String.class, vmName);
         call(image, "setOsName", String.class, "winavf");
         call(image, "setKernelPath", String.class, kernel.getAbsolutePath());
+        if (kernelParams != null && !kernelParams.isEmpty()) {
+            call(image, "addParam", String.class, kernelParams);
+        }
         call(image, "useNetwork", boolean.class, false);
         call(image, "useAutoMemoryBalloon", boolean.class, true);
         Class<?> disk = Class.forName(custom.getName() + "$Disk");
